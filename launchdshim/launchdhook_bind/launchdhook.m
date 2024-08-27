@@ -205,7 +205,6 @@ int hooked_posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_acti
             rename(path, bakPath);
             clonefile(newPath, path, 0);
             increaseJetsamLimits(attrp);
-            posix_spawnattr_set_launch_type_np(attrp, 0);
             int ret = orig_posix_spawn(pid, path, file_actions, attrp, argv, envp);
             remove(path);
             rename(bakPath, path);
@@ -223,7 +222,6 @@ int hooked_posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_acti
             char **envc = envbuf_mutcopy((const char **)envp);
             envbuf_setenv(&envc, "DYLD_INSERT_LIBRARIES", "/System/Library/VideoCodecs/lib/hooks/generalhook.dylib");
             increaseJetsamLimits(attrp);
-            posix_spawnattr_set_launch_type_np(attrp, 0);
             int ret = orig_posix_spawn(pid, path, file_actions, attrp, argv, envc);
             envbuf_free(envc);
             return ret;
