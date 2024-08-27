@@ -405,12 +405,12 @@ int enableJIT(pid_t pid)
     {
         jitterd(pid);
 //            NSLog(@"Hopefully enabled jit");
-        usleep(10000);
         if (isJITEnabled())
         {
 //                NSLog(@"[+] JIT has heen enabled with PT_TRACE_ME");
             return 0;
         }
+        usleep(10000);
     }
     return 1;
 }
