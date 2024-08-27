@@ -45,7 +45,7 @@ _builtin_vm_protect:     \n
 static bool redirectFunction(char *name, void *patchAddr, void *target) {
     kern_return_t kret = builtin_vm_protect(mach_task_self(), (vm_address_t)patchAddr, sizeof(patch), false, PROT_READ | PROT_WRITE | VM_PROT_COPY);
     if (kret != KERN_SUCCESS) {
-        NSLog(@"[DyldLVBypass] vm_protect(RW) fails at line %d", __LINE__);
+//        NSLog(@"[DyldLVBypass] vm_protect(RW) fails at line %d", __LINE__);
         return FALSE;
     }
     
@@ -54,11 +54,11 @@ static bool redirectFunction(char *name, void *patchAddr, void *target) {
     
     kret = builtin_vm_protect(mach_task_self(), (vm_address_t)patchAddr, sizeof(patch), false, PROT_READ | PROT_EXEC);
     if (kret != KERN_SUCCESS) {
-        NSLog(@"[DyldLVBypass] vm_protect(RX) fails at line %d", __LINE__);
+//        NSLog(@"[DyldLVBypass] vm_protect(RX) fails at line %d", __LINE__);
         return FALSE;
     }
     
-    NSLog(@"[DyldLVBypass] hook %s succeed!", name);
+//    NSLog(@"[DyldLVBypass] hook %s succeed!", name);
     return TRUE;
 }
 
@@ -73,12 +73,35 @@ static bool searchAndPatch(char *name, char *base, char *signature, int length, 
     }
     
     if (patchAddr == NULL) {
-        NSLog(@"[DyldLVBypass] hook fails line %d", __LINE__);
+//        NSLog(@"[DyldLVBypass] hook fails line %d", __LINE__);
         return FALSE;
     }
     
-    NSLog(@"[DyldLVBypass] found %s at %p", name, patchAddr);
+//    NSLog(@"[DyldLVBypass] found %s at %p", name, patchAddr);
     return redirectFunction(name, patchAddr, target);
+}
+
+static char patch2[] = {0x1F,0x20,0x03,0xD5};
+
+static bool nopINSN(void *patchAddr) {
+    kern_return_t kret = builtin_vm_protect(mach_task_self(), (vm_address_t)patchAddr, sizeof(patch2), false, PROT_READ | PROT_WRITE | VM_PROT_COPY);
+    if (kret != KERN_SUCCESS) {
+//        NSLog(@"[DyldLVBypass] vm_protect(RW) fails at line %d", __LINE__);
+        return FALSE;
+    }
+    
+//    NSLog(@"val: 0x%lx", *(uintptr_t* )patchAddr);
+    builtin_memcpy((char *)patchAddr, patch2, sizeof(patch2));
+//    NSLog(@"val after: 0x%lx", *(uintptr_t* )patchAddr);
+    
+    kret = builtin_vm_protect(mach_task_self(), (vm_address_t)patchAddr, sizeof(patch2), false, PROT_READ | PROT_EXEC);
+    if (kret != KERN_SUCCESS) {
+//        NSLog(@"[DyldLVBypass] vm_protect(RX) fails at line %d", __LINE__);
+        return FALSE;
+    }
+    
+//    NSLog(@"[DyldLVBypass] hook succeed!");
+    return TRUE;
 }
 
 static struct dyld_all_image_infos *_alt_dyld_get_all_image_infos() {
@@ -108,6 +131,10 @@ static void *getDyldBase(void) {
 
 static void* hooked_mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset) {
     void *map = __mmap(addr, len, prot, flags, fd, offset);
+    if (map && (prot & PROT_EXEC) && builtin_vm_protect(mach_task_self(), (vm_address_t)addr, len, false, prot) != 0) {
+        munmap(addr, len);
+        map = MAP_FAILED;
+    }
     if (map == MAP_FAILED && fd && (prot & PROT_EXEC)) {
         map = __mmap(addr, len, PROT_READ | PROT_WRITE, flags | MAP_PRIVATE | MAP_ANON, 0, 0);
         void *memoryLoadedFile = __mmap(NULL, len, PROT_READ, MAP_PRIVATE, fd, offset);
@@ -150,7 +177,7 @@ void init_bypassDyldLibValidation() {
     if (bypassed) return;
     bypassed = YES;
 
-    NSLog(@"[DyldLVBypass] init");
+//    NSLog(@"[DyldLVBypass] init");
     
     // Modifying exec page during execution may cause SIGBUS, so ignore it now
     // Only comment this out if only one thread (main) is running
@@ -161,4 +188,5 @@ void init_bypassDyldLibValidation() {
     //redirectFunction("fcntl", fcntl, hooked_fcntl);
     searchAndPatch("dyld_mmap", dyldBase, mmapSig, sizeof(mmapSig), hooked_mmap);
     searchAndPatch("dyld_fcntl", dyldBase, fcntlSig, sizeof(fcntlSig), hooked___fcntl);
+    nopINSN((void *)((uintptr_t)dyldBase + 0x2EB6C));
 }
