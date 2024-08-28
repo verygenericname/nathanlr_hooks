@@ -25,14 +25,6 @@
 - (id)_cfBundle;
 @end
 
-@implementation NSBundle (Loaded)
-
-- (BOOL)isLoaded {
-    return YES;
-}
-
-@end
-
 int csops_audittoken(pid_t pid, unsigned int  ops, void * useraddr, size_t usersize, audit_token_t * token);
 int csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize);
 int ptrace(int, int, int, int);
@@ -218,6 +210,18 @@ int enableJIT(pid_t pid)
     return 1;
 }
 
+static BOOL (*orig_isLoaded)(NSBundle *self, SEL _cmd);
+
+BOOL hook_isLoaded(NSBundle *self, SEL _cmd) {
+    NSString *targetBundlePath = @"/System/Library/CoreServices/CarPlay.app";
+
+    if ([[self bundlePath] isEqualToString:targetBundlePath]) {
+        return YES;
+    }
+
+    return orig_isLoaded(self, _cmd);
+}
+
 int main(int argc, char *argv[], char *envp[], char* apple[]) {
     @autoreleasepool {
         JB_SandboxExtensions = getSandboxExtensionsFromPlist();
@@ -248,6 +252,12 @@ int main(int argc, char *argv[], char *envp[], char* apple[]) {
 //        NSProcessInfo.processInfo.processName = appBundle.infoDictionary[@"CFBundleExecutable"];
 //        *_CFGetProgname() = NSProcessInfo.processInfo.processName.UTF8String;
 
+        void *substrateHandle = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
+        typedef void (*MSHookMessageEx_t)(Class, SEL, IMP, IMP *);
+        MSHookMessageEx_t MSHookMessageEx = (MSHookMessageEx_t)dlsym(substrateHandle, "MSHookMessageEx");
+        
+        MSHookMessageEx(objc_getClass("NSBundle"), @selector(isLoaded), (IMP)hook_isLoaded, (IMP *)&orig_isLoaded);
+        
         void *handle = dlopen("/System/Library/PrivateFrameworks/DashBoard.framework/DashBoard", RTLD_GLOBAL);
         dlopen("/var/jb/usr/lib/TweakInject.dylib", RTLD_NOW | RTLD_GLOBAL);
         DBSystemAppMain = dlsym(handle, "DBSystemAppMain");

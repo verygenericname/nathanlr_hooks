@@ -160,6 +160,7 @@ __attribute__((constructor)) static void init(int argc, char **argv, char *envp[
         if (enableJIT(getpid()) != 0) {
 //            NSLog(@"[-] Failed to enable JIT");
         } else {
+//            unsetenv("DYLD_INSERT_LIBRARIES");
             init_bypassDyldLibValidation();
             dlopen("/var/jb/usr/lib/TweakInject.dylib", RTLD_NOW | RTLD_GLOBAL);
         }

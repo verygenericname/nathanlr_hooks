@@ -26,14 +26,6 @@
 - (id)_cfBundle;
 @end
 
-@implementation NSBundle (Loaded)
-
-- (BOOL)isLoaded {
-    return YES;
-}
-
-@end
-
 @interface XBSnapshotContainerIdentity : NSObject <NSCopying>
 @property (nonatomic, readonly, copy) NSString* bundleIdentifier;
 - (NSString*)snapshotContainerPath;
@@ -277,6 +269,18 @@ int enableJIT(pid_t pid)
     return 1;
 }
 
+static BOOL (*orig_isLoaded)(NSBundle *self, SEL _cmd);
+
+BOOL hook_isLoaded(NSBundle *self, SEL _cmd) {
+    NSString *targetBundlePath = @"/System/Library/CoreServices/SpringBoard.app";
+
+    if ([[self bundlePath] isEqualToString:targetBundlePath]) {
+        return YES;
+    }
+
+    return orig_isLoaded(self, _cmd);
+}
+
 int main(int argc, char *argv[], char *envp[], char* apple[]) {
     @autoreleasepool {
             JB_SandboxExtensions = getSandboxExtensionsFromPlist();
@@ -308,12 +312,14 @@ int main(int argc, char *argv[], char *envp[], char* apple[]) {
 //        NSProcessInfo.processInfo.processName = appBundle.infoDictionary[@"CFBundleExecutable"];
 //        *_CFGetProgname() = NSProcessInfo.processInfo.processName.UTF8String;
         
-        void *handle = dlopen("/System/Library/PrivateFrameworks/SpringBoard.framework/SpringBoard", RTLD_GLOBAL);
-        dlopen("/var/jb/usr/lib/TweakInject.dylib", RTLD_NOW | RTLD_GLOBAL);
-        
         void *substrateHandle = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
         typedef void (*MSHookMessageEx_t)(Class, SEL, IMP, IMP *);
         MSHookMessageEx_t MSHookMessageEx = (MSHookMessageEx_t)dlsym(substrateHandle, "MSHookMessageEx");
+        
+        MSHookMessageEx(objc_getClass("NSBundle"), @selector(isLoaded), (IMP)hook_isLoaded, (IMP *)&orig_isLoaded);
+        
+        void *handle = dlopen("/System/Library/PrivateFrameworks/SpringBoard.framework/SpringBoard", RTLD_GLOBAL);
+        dlopen("/var/jb/usr/lib/TweakInject.dylib", RTLD_NOW | RTLD_GLOBAL);
         
         Class class_XBSnapshotContainerIdentity = objc_getClass("XBSnapshotContainerIdentity");
         MSHookMessageEx(
