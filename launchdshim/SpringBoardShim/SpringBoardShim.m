@@ -281,6 +281,39 @@ BOOL hook_isLoaded(NSBundle *self, SEL _cmd) {
     return orig_isLoaded(self, _cmd);
 }
 
+uint64_t (*orig_LSFindBundleWithInfo_NoIOFiltered)(id, uint64_t, CFStringRef, Boolean, CFURLRef, UInt64, NSString *, BOOL (^)(id, uint64_t, const id), NSError **);
+
+uint64_t new_LSFindBundleWithInfo_NoIOFiltered(id arg1, uint64_t arg2, CFStringRef arg3, Boolean arg4, CFURLRef arg5, UInt64 arg6, NSString *arg7, BOOL (^arg8)(id, uint64_t, const id), NSError **arg9) {
+    
+    CFURLRef newUrl = NULL;
+
+    if (arg5 != NULL) {
+        NSString *cfURLString = (__bridge NSString *)CFURLCopyPath(arg5);
+        NSString *strippedLast = [cfURLString stringByDeletingLastPathComponent];
+        NSString *appName = [cfURLString lastPathComponent];
+        
+        if ([strippedLast isEqualToString:@"/System/Library/VideoCodecs/CoreServices"]) {
+            NSString *baseURLString = @"/System/Library/CoreServices/";
+            NSString *appendURLString = [baseURLString stringByAppendingString:appName];
+            
+            newUrl = CFURLCreateWithString(kCFAllocatorDefault, (__bridge CFStringRef)appendURLString, NULL);
+        } else if ([strippedLast isEqualToString:@"/System/Library/VideoCodecs/Applications"]) {
+            NSString *baseURLString = @"/Applications/";
+            NSString *appendURLString = [baseURLString stringByAppendingString:appName];
+            
+            newUrl = CFURLCreateWithString(kCFAllocatorDefault, (__bridge CFStringRef)appendURLString, NULL);
+        }
+    }
+
+    uint64_t ret = orig_LSFindBundleWithInfo_NoIOFiltered(arg1, arg2, arg3, arg4, newUrl, arg6, arg7, arg8, arg9);
+
+    if (newUrl) {
+        CFRelease(newUrl);
+    }
+
+    return ret;
+}
+
 int main(int argc, char *argv[], char *envp[], char* apple[]) {
     @autoreleasepool {
             JB_SandboxExtensions = getSandboxExtensionsFromPlist();
@@ -315,10 +348,17 @@ int main(int argc, char *argv[], char *envp[], char* apple[]) {
         void *substrateHandle = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
         typedef void (*MSHookMessageEx_t)(Class, SEL, IMP, IMP *);
         MSHookMessageEx_t MSHookMessageEx = (MSHookMessageEx_t)dlsym(substrateHandle, "MSHookMessageEx");
+        typedef void* MSImageRef;
+        typedef void (*MSHookFunction_t)(void *, void *, void **);
+        MSHookFunction_t MSHookFunction = (MSHookFunction_t)dlsym(substrateHandle, "MSHookFunction");
+        typedef void* (*MSGetImageByName_t)(const char *image_name);
+        typedef void* (*MSFindSymbol_t)(void *image, const char *name);
+        MSGetImageByName_t MSGetImageByName = (MSGetImageByName_t)dlsym(substrateHandle, "MSGetImageByName");
+        MSFindSymbol_t MSFindSymbol = (MSFindSymbol_t)dlsym(substrateHandle, "MSFindSymbol");
         
         MSHookMessageEx(objc_getClass("NSBundle"), @selector(isLoaded), (IMP)hook_isLoaded, (IMP *)&orig_isLoaded);
         
-        void *handle = dlopen("/System/Library/PrivateFrameworks/SpringBoard.framework/SpringBoard", RTLD_GLOBAL);
+        void *SBImage = dlopen("/System/Library/PrivateFrameworks/SpringBoard.framework/SpringBoard", RTLD_GLOBAL);
         dlopen("/var/jb/usr/lib/TweakInject.dylib", RTLD_NOW | RTLD_GLOBAL);
         
         Class class_XBSnapshotContainerIdentity = objc_getClass("XBSnapshotContainerIdentity");
@@ -337,20 +377,15 @@ int main(int argc, char *argv[], char *envp[], char* apple[]) {
 //            (IMP*)&orig_trustStateForApplication
 //        );
         
-        typedef void* MSImageRef;
-        typedef void (*MSHookFunction_t)(void *, void *, void **);
-        MSHookFunction_t MSHookFunction = (MSHookFunction_t)dlsym(substrateHandle, "MSHookFunction");
-        
-        typedef void* (*MSGetImageByName_t)(const char *image_name);
-        typedef void* (*MSFindSymbol_t)(void *image, const char *name);
-        MSGetImageByName_t MSGetImageByName = (MSGetImageByName_t)dlsym(substrateHandle, "MSGetImageByName");
-        MSFindSymbol_t MSFindSymbol = (MSFindSymbol_t)dlsym(substrateHandle, "MSFindSymbol");
+//        MSImageRef coreServicesImage = MSGetImageByName("/System/Library/Frameworks/CoreServices.framework/CoreServices");
+//        uint64_t* _LSFindBundleWithInfo_NoIOFiltered_ptr = MSFindSymbol(coreServicesImage, "__LSFindBundleWithInfo_NoIOFiltered");
+//        MSHookFunction(_LSFindBundleWithInfo_NoIOFiltered_ptr, (void *)&new_LSFindBundleWithInfo_NoIOFiltered, (void **)&orig_LSFindBundleWithInfo_NoIOFiltered);
         
         MSImageRef splashImage = MSGetImageByName("/System/Library/PrivateFrameworks/SplashBoard.framework/SplashBoard");
         void* XBValidateStoryboard_ptr = MSFindSymbol(splashImage, "_XBValidateStoryboard");
         MSHookFunction(XBValidateStoryboard_ptr, (void *)&new_XBValidateStoryboard, (void **)&orig_XBValidateStoryboard);
         
-        SBSystemAppMain = dlsym(handle, "SBSystemAppMain");
+        SBSystemAppMain = dlsym(SBImage, "SBSystemAppMain");
         return SBSystemAppMain(argc, argv, envp, apple);
     }
 }

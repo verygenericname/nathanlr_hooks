@@ -14,7 +14,6 @@
 #include <utils.h>
 #include <litehook.h>
 #include "sandbox.h"
-#import <AVFoundation/AVFoundation.h>
 
 #define SYSCALL_CSOPS 0xA9
 #define SYSCALL_CSOPS_AUDITTOKEN 0xAA
@@ -358,23 +357,24 @@ char *getSandboxExtensionsFromPlist() {
 uint64_t (*orig_LSFindBundleWithInfo_NoIOFiltered)(id, uint64_t, CFStringRef, Boolean, CFURLRef, UInt64, NSString *, BOOL (^)(id, uint64_t, const id), NSError **);
 
 uint64_t new_LSFindBundleWithInfo_NoIOFiltered(id arg1, uint64_t arg2, CFStringRef arg3, Boolean arg4, CFURLRef arg5, UInt64 arg6, NSString *arg7, BOOL (^arg8)(id, uint64_t, const id), NSError **arg9) {
-    NSFileManager *fileManager = [NSFileManager defaultManager];
-
-    NSString *baseOldPath = @"/System/Library/VideoCodecs/Applications/";
-    NSString *baseNewPath = @"/Applications/";
     
     CFURLRef newUrl = NULL;
 
     if (arg5 != NULL) {
-        NSString *cfURLString = (__bridge NSString *)CFURLGetString(arg5);
-
+        NSString *cfURLString = (__bridge NSString *)CFURLCopyPath(arg5);
+        NSString *strippedLast = [cfURLString stringByDeletingLastPathComponent];
         NSString *appName = [cfURLString lastPathComponent];
-
-        NSString *oldPath = [baseOldPath stringByAppendingPathComponent:appName];
-        NSString *newPath = [baseNewPath stringByAppendingPathComponent:appName];
-
-        if ([fileManager fileExistsAtPath:newPath]) {
-            newUrl = CFURLCreateWithString(kCFAllocatorDefault, (__bridge CFStringRef)newPath, NULL);
+        
+        if ([strippedLast isEqualToString:@"/System/Library/VideoCodecs/Applications"]) {
+            NSString *baseURLString = @"/Applications/";
+            NSString *appendURLString = [baseURLString stringByAppendingString:appName];
+            
+            newUrl = CFURLCreateWithString(kCFAllocatorDefault, (__bridge CFStringRef)appendURLString, NULL);
+        } else if ([strippedLast isEqualToString:@"/System/Library/VideoCodecs/CoreServices"]) {
+            NSString *baseURLString = @"/System/Library/CoreServices/";
+            NSString *appendURLString = [baseURLString stringByAppendingString:appName];
+            
+            newUrl = CFURLCreateWithString(kCFAllocatorDefault, (__bridge CFStringRef)appendURLString, NULL);
         }
     }
 
@@ -420,12 +420,12 @@ int enableJIT(pid_t pid)
 - (NSURL *)containerURL;
 @end
 
-static BOOL isNewContainer = NO; // Flag to indicate if a new container was created
+static BOOL isNewContainer = NO;
 
 NSString *getBundlePathFromExecutablePath(const char *executablePath) {
     NSString *executablePathStr = [NSString stringWithUTF8String:executablePath];
     
-    if ([executablePathStr hasPrefix:@"/System/Library/VideoCodecs/Applications/"]) {
+    if (strncmp(executablePath, "/System/Library/VideoCodecs/Applications/", 41) == 0) {
         NSString *relativePath = [executablePathStr substringFromIndex:[@"/System/Library/VideoCodecs/Applications/" length]];
         NSString *bundlePath = [@"/Applications/" stringByAppendingPathComponent:relativePath];
         
@@ -575,6 +575,20 @@ __attribute__((constructor)) static void init(int argc, char **argv, char *envp[
             } else {
                 MSHookFunction(posix_spawn, (void*)hooked_posix_spawn, (void**)&orig_posix_spawn);
             }
+        } else if (strcmp(argv[0], "/System/Library/VideoCodecs/SysBins/CoreTelephony.framework/Support/CommCenter") == 0) {
+            void *substrateHandle = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
+            typedef void* MSImageRef;
+            typedef void* (*MSGetImageByName_t)(const char *image_name);
+            typedef void* (*MSFindSymbol_t)(void *image, const char *name);
+
+            MSGetImageByName_t MSGetImageByName = (MSGetImageByName_t)dlsym(substrateHandle, "MSGetImageByName");
+            MSFindSymbol_t MSFindSymbol = (MSFindSymbol_t)dlsym(substrateHandle, "MSFindSymbol");
+            typedef void (*MSHookFunction_t)(void *, void *, void **);
+            MSHookFunction_t MSHookFunction = (MSHookFunction_t)dlsym(substrateHandle, "MSHookFunction");
+            
+            MSImageRef coreServicesImage = MSGetImageByName("/System/Library/Frameworks/CoreServices.framework/CoreServices");
+            uint64_t* _LSFindBundleWithInfo_NoIOFiltered_ptr = MSFindSymbol(coreServicesImage, "__LSFindBundleWithInfo_NoIOFiltered");
+            MSHookFunction(_LSFindBundleWithInfo_NoIOFiltered_ptr, (void *)&new_LSFindBundleWithInfo_NoIOFiltered, (void **)&orig_LSFindBundleWithInfo_NoIOFiltered);
         } else if (strcmp(argv[0], "/System/Library/VideoCodecs/SysBins/SocialLayer.framework/sociallayerd.app/sociallayerd") == 0) {
             NSBundle *appBundle = [[NSBundle alloc] initWithPath:@"/System/Library/PrivateFrameworks/SocialLayer.framework/sociallayerd.app"];
             Class bundleClass = objc_getClass("NSBundle");
@@ -585,6 +599,20 @@ __attribute__((constructor)) static void init(int argc, char **argv, char *envp[
             NSMutableArray<NSString *> *objcArgv = NSProcessInfo.processInfo.arguments.mutableCopy;
             objcArgv[0] = appBundle.executablePath;
             [NSProcessInfo.processInfo performSelector:@selector(setArguments:) withObject:objcArgv];
+            
+            void *substrateHandle = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
+            typedef void* MSImageRef;
+            typedef void* (*MSGetImageByName_t)(const char *image_name);
+            typedef void* (*MSFindSymbol_t)(void *image, const char *name);
+            
+            MSGetImageByName_t MSGetImageByName = (MSGetImageByName_t)dlsym(substrateHandle, "MSGetImageByName");
+            MSFindSymbol_t MSFindSymbol = (MSFindSymbol_t)dlsym(substrateHandle, "MSFindSymbol");
+            typedef void (*MSHookFunction_t)(void *, void *, void **);
+            MSHookFunction_t MSHookFunction = (MSHookFunction_t)dlsym(substrateHandle, "MSHookFunction");
+            
+            MSImageRef coreServicesImage = MSGetImageByName("/System/Library/Frameworks/CoreServices.framework/CoreServices");
+            uint64_t* _LSFindBundleWithInfo_NoIOFiltered_ptr = MSFindSymbol(coreServicesImage, "__LSFindBundleWithInfo_NoIOFiltered");
+            MSHookFunction(_LSFindBundleWithInfo_NoIOFiltered_ptr, (void *)&new_LSFindBundleWithInfo_NoIOFiltered, (void **)&orig_LSFindBundleWithInfo_NoIOFiltered);
         } else if (strcmp(argv[0], "/System/Library/VideoCodecs/SysBins/installd") == 0) {
             void *substrateHandle = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
             typedef void (*MSHookMessageEx_t)(Class, SEL, IMP, IMP *);
@@ -612,20 +640,6 @@ __attribute__((constructor)) static void init(int argc, char **argv, char *envp[
            uint64_t* _LSFindBundleWithInfo_NoIOFiltered_ptr = MSFindSymbol(coreServicesImage, "__LSFindBundleWithInfo_NoIOFiltered");
            MSHookFunction(_LSFindBundleWithInfo_NoIOFiltered_ptr, (void *)&new_LSFindBundleWithInfo_NoIOFiltered, (void **)&orig_LSFindBundleWithInfo_NoIOFiltered);
            }*/
-        
-        void *substrateHandle = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
-        typedef void* MSImageRef;
-        typedef void* (*MSGetImageByName_t)(const char *image_name);
-        typedef void* (*MSFindSymbol_t)(void *image, const char *name);
-        
-        MSGetImageByName_t MSGetImageByName = (MSGetImageByName_t)dlsym(substrateHandle, "MSGetImageByName");
-        MSFindSymbol_t MSFindSymbol = (MSFindSymbol_t)dlsym(substrateHandle, "MSFindSymbol");
-        typedef void (*MSHookFunction_t)(void *, void *, void **);
-        MSHookFunction_t MSHookFunction = (MSHookFunction_t)dlsym(substrateHandle, "MSHookFunction");
-        
-        MSImageRef coreServicesImage = MSGetImageByName("/System/Library/Frameworks/CoreServices.framework/CoreServices");
-        uint64_t* _LSFindBundleWithInfo_NoIOFiltered_ptr = MSFindSymbol(coreServicesImage, "__LSFindBundleWithInfo_NoIOFiltered");
-        MSHookFunction(_LSFindBundleWithInfo_NoIOFiltered_ptr, (void *)&new_LSFindBundleWithInfo_NoIOFiltered, (void **)&orig_LSFindBundleWithInfo_NoIOFiltered);
         
         dlopen("/var/jb/usr/lib/TweakInject.dylib", RTLD_NOW | RTLD_GLOBAL);
     }

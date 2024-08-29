@@ -472,9 +472,7 @@ int memorystatus_control_hook(uint32_t command, int32_t pid, uint32_t flags, voi
 void writeSandboxExtensionsToPlist() {
     NSString *filePath = @"/var/jb/System/Library/NLR_SANDBOX_EXTENSIONS.plist";
     
-    NSFileManager *fileManager = [NSFileManager defaultManager];
-    
-    [fileManager removeItemAtPath:filePath error:nil];
+    remove(filePath.UTF8String);
     
     NSString *sandboxExtensions = generateSystemWideSandboxExtensions();
     
