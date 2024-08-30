@@ -288,24 +288,24 @@ int main(int argc, char *argv[], char *envp[], char* apple[]) {
         void *substrateHandle = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
         typedef void (*MSHookMessageEx_t)(Class, SEL, IMP, IMP *);
         MSHookMessageEx_t MSHookMessageEx = (MSHookMessageEx_t)dlsym(substrateHandle, "MSHookMessageEx");
-        typedef void* MSImageRef;
-        typedef void (*MSHookFunction_t)(void *, void *, void **);
-        MSHookFunction_t MSHookFunction = (MSHookFunction_t)dlsym(substrateHandle, "MSHookFunction");
-        typedef void* (*MSGetImageByName_t)(const char *image_name);
-        typedef void* (*MSFindSymbol_t)(void *image, const char *name);
-        MSGetImageByName_t MSGetImageByName = (MSGetImageByName_t)dlsym(substrateHandle, "MSGetImageByName");
-        MSFindSymbol_t MSFindSymbol = (MSFindSymbol_t)dlsym(substrateHandle, "MSFindSymbol");
+//        typedef void* MSImageRef;
+//        typedef void (*MSHookFunction_t)(void *, void *, void **);
+//        MSHookFunction_t MSHookFunction = (MSHookFunction_t)dlsym(substrateHandle, "MSHookFunction");
+//        typedef void* (*MSGetImageByName_t)(const char *image_name);
+//        typedef void* (*MSFindSymbol_t)(void *image, const char *name);
+//        MSGetImageByName_t MSGetImageByName = (MSGetImageByName_t)dlsym(substrateHandle, "MSGetImageByName");
+//        MSFindSymbol_t MSFindSymbol = (MSFindSymbol_t)dlsym(substrateHandle, "MSFindSymbol");
         
         MSHookMessageEx(objc_getClass("NSBundle"), @selector(isLoaded), (IMP)hook_isLoaded, (IMP *)&orig_isLoaded);
         
-        void *handle = dlopen("/System/Library/PrivateFrameworks/DashBoard.framework/DashBoard", RTLD_GLOBAL);
+        void *DBImage = dlopen("/System/Library/PrivateFrameworks/DashBoard.framework/DashBoard", RTLD_GLOBAL);
         dlopen("/var/jb/usr/lib/TweakInject.dylib", RTLD_NOW | RTLD_GLOBAL);
         
 //        MSImageRef coreServicesImage = MSGetImageByName("/System/Library/Frameworks/CoreServices.framework/CoreServices");
 //        uint64_t* _LSFindBundleWithInfo_NoIOFiltered_ptr = MSFindSymbol(coreServicesImage, "__LSFindBundleWithInfo_NoIOFiltered");
 //        MSHookFunction(_LSFindBundleWithInfo_NoIOFiltered_ptr, (void *)&new_LSFindBundleWithInfo_NoIOFiltered, (void **)&orig_LSFindBundleWithInfo_NoIOFiltered);
         
-        DBSystemAppMain = dlsym(handle, "DBSystemAppMain");
+        DBSystemAppMain = dlsym(DBImage, "DBSystemAppMain");
         return DBSystemAppMain(argc, argv, envp, apple);
     }
 }

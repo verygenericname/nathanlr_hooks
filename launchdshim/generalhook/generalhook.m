@@ -365,17 +365,12 @@ uint64_t new_LSFindBundleWithInfo_NoIOFiltered(id arg1, uint64_t arg2, CFStringR
         NSString *strippedLast = [cfURLString stringByDeletingLastPathComponent];
         NSString *appName = [cfURLString lastPathComponent];
         
-        if ([strippedLast isEqualToString:@"/System/Library/VideoCodecs/Applications"]) {
-            NSString *baseURLString = @"/Applications/";
-            NSString *appendURLString = [baseURLString stringByAppendingString:appName];
+        if (strcmp("/System/Library/VideoCodecs/Applications", strippedLast.UTF8String) == 0) {
+            newUrl = CFURLCreateWithString(kCFAllocatorDefault, (__bridge CFStringRef)[@"/Applications/" stringByAppendingString:appName], NULL);
+        } /*else if ([strippedLast isEqualToString:@"/System/Library/VideoCodecs/CoreServices"]) {
             
-            newUrl = CFURLCreateWithString(kCFAllocatorDefault, (__bridge CFStringRef)appendURLString, NULL);
-        } else if ([strippedLast isEqualToString:@"/System/Library/VideoCodecs/CoreServices"]) {
-            NSString *baseURLString = @"/System/Library/CoreServices/";
-            NSString *appendURLString = [baseURLString stringByAppendingString:appName];
-            
-            newUrl = CFURLCreateWithString(kCFAllocatorDefault, (__bridge CFStringRef)appendURLString, NULL);
-        }
+            newUrl = CFURLCreateWithString(kCFAllocatorDefault, (__bridge CFStringRef)[@"/System/Library/CoreServices/" stringByAppendingString:appName], NULL);
+        }*/
     }
 
     uint64_t ret = orig_LSFindBundleWithInfo_NoIOFiltered(arg1, arg2, arg3, arg4, newUrl, arg6, arg7, arg8, arg9);
