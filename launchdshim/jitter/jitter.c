@@ -91,9 +91,9 @@ void jitterd_received_message(mach_port_t machPort, bool systemwide)
              // NSLog(@"responding to %s message %lld with %s", systemwide ? "systemwide" : "", msgId, description);
             free(description);
             err = xpc_pipe_routine_reply(reply);
-            if (err != 0) {
+//            if (err != 0) {
                  // NSLog(@"Error %d sending response", err);
-            }
+//            }
             free(reply);
         }
     if (message) {
