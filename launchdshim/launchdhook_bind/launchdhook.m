@@ -498,28 +498,25 @@ struct rebinding rebindings_xpcproxy[2] = {
 
 __attribute__((constructor)) static void init(int argc, char **argv) {
     @autoreleasepool {
-        NSString *processName = getProcessName();
-        if ([processName isEqualToString:@"xpcproxy"]) {
+        if (getpid() == 1) {
+            if (access("/System/Library/VideoCodecs/CoreServices", F_OK) != -1) {
+            } else {
+                bindfs("/private/var/jb/System/Library/", "/System/Library/VideoCodecs");
+            }
+            
+            if (access("/System/Library/VideoCodecs/lib/libiosexec.1.dylib", F_OK) != -1) {
+                unmount("/System/Library/VideoCodecs/lib/", MNT_FORCE);
+                unmount("/System/Library/VideoCodecs/", MNT_FORCE);
+                bindfs("/private/var/jb/System/Library/", "/System/Library/VideoCodecs");
+                bindfs("/private/var/jb/usr/lib/", "/System/Library/VideoCodecs/lib");
+            } else {
+                bindfs("/private/var/jb/usr/lib/", "/System/Library/VideoCodecs/lib");
+            }
+            writeSandboxExtensionsToPlist();
+            rebind_symbols(rebindings, 7);
+        } else {
             unsetenv("DYLD_INSERT_LIBRARIES");
             rebind_symbols(rebindings_xpcproxy, 2);
-        } else if ([processName isEqualToString:@"launchd"]) {
-            if (getpid() == 1) {
-                if (access("/System/Library/VideoCodecs/CoreServices", F_OK) != -1) {
-                } else {
-                    bindfs("/private/var/jb/System/Library/", "/System/Library/VideoCodecs");
-                }
-                
-                if (access("/System/Library/VideoCodecs/lib/libiosexec.1.dylib", F_OK) != -1) {
-                    unmount("/System/Library/VideoCodecs/lib/", MNT_FORCE);
-                    unmount("/System/Library/VideoCodecs/", MNT_FORCE);
-                    bindfs("/private/var/jb/System/Library/", "/System/Library/VideoCodecs");
-                    bindfs("/private/var/jb/usr/lib/", "/System/Library/VideoCodecs/lib");
-                } else {
-                    bindfs("/private/var/jb/usr/lib/", "/System/Library/VideoCodecs/lib");
-                }
-                writeSandboxExtensionsToPlist();
-                rebind_symbols(rebindings, 7);
-            }
         }
     }
 }
