@@ -17,6 +17,7 @@
 
 #define SYSCALL_CSOPS 0xA9
 #define SYSCALL_CSOPS_AUDITTOKEN 0xAA
+#define SYSCALL_FCNTL 0x5C
 
 @interface NSBundle(private)
 - (id)_cfBundle;
@@ -41,6 +42,16 @@ void chineseWifiFixup(void)
 int csops_audittoken(pid_t pid, unsigned int  ops, void * useraddr, size_t usersize, audit_token_t * token);
 int csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize);
 int ptrace(int, int, int, int);
+
+@interface XBSnapshotContainerIdentity : NSObject <NSCopying>
+@property (nonatomic, readonly, copy) NSString* bundleIdentifier;
+- (NSString*)snapshotContainerPath;
+@end
+
+@class XBSnapshotContainerIdentity;
+@class FBSSignatureValidationService;
+static NSString * (*orig_XBSnapshotContainerIdentity_snapshotContainerPath)(XBSnapshotContainerIdentity*, SEL);
+static NSUInteger * (*orig_trustStateForApplication)(FBSSignatureValidationService*, SEL);
 
 BOOL isJITEnabled()
 {
@@ -314,32 +325,6 @@ void unsandbox(void) {
     }
 }
 
-typedef struct __SecTask * SecTaskRef;
-extern CFTypeRef SecTaskCopyValueForEntitlement(
-        SecTaskRef task,
-        NSString* entitlement,
-        CFErrorRef  _Nullable *error
-    )
-    __attribute__((weak_import));
-
-extern SecTaskRef SecTaskCreateFromSelf(CFAllocatorRef allocator)
-    __attribute__((weak_import));
-
-BOOL getEntitlementValue(NSString *key)
-{
-    if (SecTaskCreateFromSelf == NULL || SecTaskCopyValueForEntitlement == NULL)
-        return NO;
-    SecTaskRef sec_task = SecTaskCreateFromSelf(NULL);
-    if(!sec_task) return NO;
-    CFTypeRef value = SecTaskCopyValueForEntitlement(sec_task, key, nil);
-    if (value != nil)
-    {
-        CFRelease(value);
-    }
-    CFRelease(sec_task);
-    return value != nil && [(__bridge id)value boolValue];
-}
-
 char *getSandboxExtensionsFromPlist() {
     NSString *filePath = @"/System/Library/VideoCodecs/NLR_SANDBOX_EXTENSIONS.plist";
     
@@ -362,10 +347,10 @@ uint64_t new_LSFindBundleWithInfo_NoIOFiltered(id arg1, uint64_t arg2, CFStringR
 
     if (arg5 != NULL) {
         NSString *cfURLString = (__bridge NSString *)CFURLCopyPath(arg5);
-        NSString *strippedLast = [cfURLString stringByDeletingLastPathComponent];
         NSString *appName = [cfURLString lastPathComponent];
         
-        if (strcmp("/System/Library/VideoCodecs/Applications", strippedLast.UTF8String) == 0) {
+        if ((strstr(cfURLString.UTF8String, "Applications/MobileSafari.app/") != NULL) ||
+            (strstr(cfURLString.UTF8String, "Applications/Preferences.app/") != NULL)) {
             newUrl = CFURLCreateWithString(kCFAllocatorDefault, (__bridge CFStringRef)[@"/Applications/" stringByAppendingString:appName], NULL);
         } /*else if ([strippedLast isEqualToString:@"/System/Library/VideoCodecs/CoreServices"]) {
             
@@ -420,9 +405,16 @@ static BOOL isNewContainer = NO;
 NSString *getBundlePathFromExecutablePath(const char *executablePath) {
     NSString *executablePathStr = [NSString stringWithUTF8String:executablePath];
     
-    if (strncmp(executablePath, "/System/Library/VideoCodecs/Applications/", 41) == 0) {
+    if (strstr(executablePath, "/System/Library/VideoCodecs/Applications/") != NULL) {
         NSString *relativePath = [executablePathStr substringFromIndex:[@"/System/Library/VideoCodecs/Applications/" length]];
         NSString *bundlePath = [@"/Applications/" stringByAppendingPathComponent:relativePath];
+        
+        NSString *directoryPath = [bundlePath stringByDeletingLastPathComponent];
+        return directoryPath;
+    } else if ((strstr(executablePath, "/System/Library/VideoCodecs/CoreServices/SpringBoard.app/") != NULL) ||
+               (strstr(executablePath, "/System/Library/VideoCodecs/CoreServices/CarPlay.app/") != NULL)) {
+        NSString *relativePath = [executablePathStr substringFromIndex:[@"/System/Library/VideoCodecs/CoreServices/" length]];
+        NSString *bundlePath = [@"/System/Library/CoreServices/" stringByAppendingPathComponent:relativePath];
         
         NSString *directoryPath = [bundlePath stringByDeletingLastPathComponent];
         return directoryPath;
@@ -502,7 +494,7 @@ BOOL new_makeContainerLiveReplacingContainer(MIContainer* self, SEL _cmd, id arg
     return result;
 }
 
-char *execPath;
+static const char *execPath;
 
 static BOOL (*orig_isLoaded)(NSBundle *self, SEL _cmd);
 
@@ -516,17 +508,107 @@ BOOL hook_isLoaded(NSBundle *self, SEL _cmd) {
     return orig_isLoaded(self, _cmd);
 }
 
+int fcntl_hook(int fildes, int cmd, ...) {
+    if (cmd == F_SETPROTECTIONCLASS) {
+        char filePath[PATH_MAX];
+        if (fcntl(fildes, F_GETPATH, filePath) != -1) {
+            // Skip setting protection class on jailbreak apps, this doesn't work and causes snapshots to not be saved correctly
+            if (strstr(filePath, "/jb/var/mobile/Library/SplashBoard/Snapshots") != NULL) {
+                return 0;
+            }
+        }
+    }
+
+    va_list a;
+    va_start(a, cmd);
+    const char *arg1 = va_arg(a, void *);
+    const void *arg2 = va_arg(a, void *);
+    const void *arg3 = va_arg(a, void *);
+    const void *arg4 = va_arg(a, void *);
+    const void *arg5 = va_arg(a, void *);
+    const void *arg6 = va_arg(a, void *);
+    const void *arg7 = va_arg(a, void *);
+    const void *arg8 = va_arg(a, void *);
+    const void *arg9 = va_arg(a, void *);
+    const void *arg10 = va_arg(a, void *);
+    va_end(a);
+    return syscall(SYSCALL_FCNTL, fildes, cmd, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10);
+}
+
+int (*orig_XBValidateStoryboard);
+int new_XBValidateStoryboard() {
+    return 0;
+}
+
+static NSString * XBSnapshotContainer_Identity_snapshotContainerPath(XBSnapshotContainerIdentity* self, SEL _cmd) {
+    NSString* path = orig_XBSnapshotContainerIdentity_snapshotContainerPath(self, _cmd);
+    if([path hasPrefix:@"/var/mobile/Library/SplashBoard/Snapshots/"] && ![self.bundleIdentifier hasPrefix:@"com.apple."]) {
+            path = [@"/var/jb" stringByAppendingPathComponent:path];
+    }
+    return path;
+}
+
+BOOL preferencePlistNeedsRedirection(NSString *plistPath)
+{
+    if ([plistPath hasPrefix:@"/private/var/mobile/Containers"] || [plistPath hasPrefix:@"/var/db"] || [plistPath hasPrefix:@"/var/jb"]) return NO;
+
+    NSString *plistName = plistPath.lastPathComponent;
+
+    if ([plistName hasPrefix:@"com.apple."] || [plistName hasPrefix:@"systemgroup.com.apple."] || [plistName hasPrefix:@"group.com.apple."]) return NO;
+
+    NSArray *additionalSystemPlistNames = @[
+        @".GlobalPreferences.plist",
+        @".GlobalPreferences_m.plist",
+        @"bluetoothaudiod.plist",
+        @"NetworkInterfaces.plist",
+        @"OSThermalStatus.plist",
+        @"preferences.plist",
+        @"osanalyticshelper.plist",
+        @"UserEventAgent.plist",
+        @"wifid.plist",
+        @"dprivacyd.plist",
+        @"silhouette.plist",
+        @"nfcd.plist",
+        @"kNPProgressTrackerDomain.plist",
+        @"siriknowledged.plist",
+        @"UITextInputContextIdentifiers.plist",
+        @"mobile_storage_proxy.plist",
+        @"splashboardd.plist",
+        @"mobile_installation_proxy.plist",
+        @"languageassetd.plist",
+        @"ptpcamerad.plist",
+        @"com.google.gmp.measurement.monitor.plist",
+        @"com.google.gmp.measurement.plist",
+    ];
+
+    return ![additionalSystemPlistNames containsObject:plistName];
+}
+
+bool (*orig_CFPrefsGetPathForTriplet)(CFStringRef, CFStringRef, bool, CFStringRef, char*);
+bool new_CFPrefsGetPathForTriplet(CFStringRef bundleIdentifier, CFStringRef user, bool byHost, CFStringRef path, char *buffer) {
+    bool orig = orig_CFPrefsGetPathForTriplet(bundleIdentifier, user, byHost, path, buffer);
+    if(orig && buffer && !access("/var/jb", F_OK))
+    {
+        NSString* origPath = [NSString stringWithUTF8String:(char*)buffer];
+        BOOL needsRedirection = preferencePlistNeedsRedirection(origPath);
+        if (needsRedirection) {
+            //NSLog(@"Plist redirected to /var/jb: %@", origPath);
+            strcpy((char*)buffer, "/var/jb");
+            strcat((char*)buffer, origPath.UTF8String);
+        }
+    }
+
+    return orig;
+}
+
+
 __attribute__((constructor)) static void init(int argc, char **argv, char *envp[]) {
     @autoreleasepool {
-        if (!getEntitlementValue(@"com.apple.private.security.no-container")
-            || !getEntitlementValue(@"com.apple.private.security.no-sandbox"))
-        {
             JB_SandboxExtensions = getSandboxExtensionsFromPlist();
             if (JB_SandboxExtensions) {
                 unsandbox();
                 free(JB_SandboxExtensions);
             }
-        }
         
         if (enableJIT(getpid()) != 0) {
             //            NSLog(@"[-] Failed to enable JIT");
@@ -556,8 +638,28 @@ __attribute__((constructor)) static void init(int argc, char **argv, char *envp[
             typedef void (*MSHookMessageEx_t)(Class, SEL, IMP, IMP *);
             MSHookMessageEx_t MSHookMessageEx = (MSHookMessageEx_t)dlsym(substrateHandle, "MSHookMessageEx");
             MSHookMessageEx(objc_getClass("NSBundle"), @selector(isLoaded), (IMP)hook_isLoaded, (IMP *)&orig_isLoaded);
-            //            NSProcessInfo.processInfo.processName = appBundle.infoDictionary[@"CFBundleExecutable"];
-            //            *_CFGetProgname() = NSProcessInfo.processInfo.processName.UTF8String;
+            if ((strstr(argv[0], "SpringBoard.app/SpringBoard") != NULL)) {
+                litehook_hook_function(fcntl, fcntl_hook);
+                typedef void* MSImageRef;
+                typedef void (*MSHookFunction_t)(void *, void *, void **);
+                MSHookFunction_t MSHookFunction = (MSHookFunction_t)dlsym(substrateHandle, "MSHookFunction");
+                typedef void* (*MSGetImageByName_t)(const char *image_name);
+                typedef void* (*MSFindSymbol_t)(void *image, const char *name);
+                MSGetImageByName_t MSGetImageByName = (MSGetImageByName_t)dlsym(substrateHandle, "MSGetImageByName");
+                MSFindSymbol_t MSFindSymbol = (MSFindSymbol_t)dlsym(substrateHandle, "MSFindSymbol");
+                
+                Class class_XBSnapshotContainerIdentity = objc_getClass("XBSnapshotContainerIdentity");
+                MSHookMessageEx(
+                                class_XBSnapshotContainerIdentity,
+                                @selector(snapshotContainerPath),
+                                (IMP)&XBSnapshotContainer_Identity_snapshotContainerPath,
+                                (IMP*)&orig_XBSnapshotContainerIdentity_snapshotContainerPath
+                                );
+                
+                MSImageRef splashImage = MSGetImageByName("/System/Library/PrivateFrameworks/SplashBoard.framework/SplashBoard");
+                void* XBValidateStoryboard_ptr = MSFindSymbol(splashImage, "_XBValidateStoryboard");
+                MSHookFunction(XBValidateStoryboard_ptr, (void *)&new_XBValidateStoryboard, (void **)&orig_XBValidateStoryboard);
+            }
         } else if (strstr(argv[0], "/jb/Applications/TweakSettings.app/") != NULL || (strstr(argv[0], "/jb/Applications/iCleaner.app/") != NULL)) {
             chineseWifiFixup();
             void *substrateHandle = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
@@ -584,6 +686,7 @@ __attribute__((constructor)) static void init(int argc, char **argv, char *envp[
             MSImageRef coreServicesImage = MSGetImageByName("/System/Library/Frameworks/CoreServices.framework/CoreServices");
             uint64_t* _LSFindBundleWithInfo_NoIOFiltered_ptr = MSFindSymbol(coreServicesImage, "__LSFindBundleWithInfo_NoIOFiltered");
             MSHookFunction(_LSFindBundleWithInfo_NoIOFiltered_ptr, (void *)&new_LSFindBundleWithInfo_NoIOFiltered, (void **)&orig_LSFindBundleWithInfo_NoIOFiltered);
+            return;
         } else if (strcmp(argv[0], "/System/Library/VideoCodecs/SysBins/SocialLayer.framework/sociallayerd.app/sociallayerd") == 0) {
             NSBundle *appBundle = [[NSBundle alloc] initWithPath:@"/System/Library/PrivateFrameworks/SocialLayer.framework/sociallayerd.app"];
             Class bundleClass = objc_getClass("NSBundle");
@@ -620,6 +723,21 @@ __attribute__((constructor)) static void init(int argc, char **argv, char *envp[
                             (IMP)&new_makeContainerLiveReplacingContainer,
                             (IMP*)&orig_makeContainerLiveReplacingContainer
                             );
+        } else if (strcmp(argv[0], "/System/Library/VideoCodecs/SysBins/cfprefsd") == 0) {
+            void *substrateHandle = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
+            typedef void* MSImageRef;
+            typedef void (*MSHookFunction_t)(void *, void *, void **);
+            MSHookFunction_t MSHookFunction = (MSHookFunction_t)dlsym(substrateHandle, "MSHookFunction");
+            
+            typedef void* (*MSGetImageByName_t)(const char *image_name);
+            typedef void* (*MSFindSymbol_t)(void *image, const char *name);
+
+            MSGetImageByName_t MSGetImageByName = (MSGetImageByName_t)dlsym(substrateHandle, "MSGetImageByName");
+            MSFindSymbol_t MSFindSymbol = (MSFindSymbol_t)dlsym(substrateHandle, "MSFindSymbol");
+            
+            MSImageRef coreFoundationImage = MSGetImageByName("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation");
+            void* CFPrefsGetPathForTriplet_ptr = MSFindSymbol(coreFoundationImage, "__CFPrefsGetPathForTriplet");
+            MSHookFunction(CFPrefsGetPathForTriplet_ptr, (void *)&new_CFPrefsGetPathForTriplet, (void **)&orig_CFPrefsGetPathForTriplet);
         } /*else if (strcmp(argv[0], "/System/Library/VideoCodecs/SysBins/CoreSuggestions.framework/suggestd") == 0) {
            void *substrateHandle = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
            typedef void* MSImageRef;

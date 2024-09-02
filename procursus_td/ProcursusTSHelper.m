@@ -39,11 +39,13 @@ extern char **environ;
 
 #define printf(...) // __VA_ARGS__
 
+int apply_coretrust_bypass_wrapper(const char *inputPath, const char *outputPath, char *teamID, char *appStoreBinary);
 const char* mach_error_string(kern_return_t);
 kern_return_t mach_vm_allocate(vm_map_t          target_task,                  mach_vm_address_t address,                  mach_vm_size_t    size,                  int               flags);
 kern_return_t mach_vm_map(vm_map_t target_task, mach_vm_address_t *address, mach_vm_size_t size, mach_vm_offset_t mask, int flags, mem_entry_name_port_t object, memory_object_offset_t offset, boolean_t copy, vm_prot_t cur_protection, vm_prot_t max_protection, vm_inherit_t inheritance);
 kern_return_t mach_vm_protect(mach_port_name_t task, mach_vm_address_t address, mach_vm_size_t size, boolean_t set_max, vm_prot_t new_prot);
 kern_return_t mach_vm_copy(vm_map_t          target_task,              mach_vm_address_t source_address,              mach_vm_size_t    count,              mach_vm_address_t dest_address);
+static int inClose = 0;
 
 #define PT_TRACE_ME     0
 #define PT_DETACH       11
@@ -484,8 +486,8 @@ int autosign(char* path)
                 }
             }
             
-                char* args[] = {"ct_bypass_dpkg_autosign", "-i", path, "-o", path, "-r", NULL};
-                int status = execBinary("/var/jb/basebins/ct_bypass_dpkg_autosign", args);
+//                char* args[] = {"ct_bypass_dpkg_autosign", "-i", path, "-o", path, "-r", NULL};
+                int status = apply_coretrust_bypass_wrapper(path, path, NULL, NULL);
                 if(status != 0) {
                     g_sign_failed = true;
                 }
@@ -503,6 +505,11 @@ int autosign(char* path)
 int (*dpkghook_orig_close)(int fd);
 int dpkghook_new_close(int fd)
 {
+    if (inClose == 1) {
+        return dpkghook_orig_close(fd);
+    }
+    
+        inClose = 1;
         int olderr=errno;
         
         char path[PATH_MAX]={0};
@@ -525,6 +532,7 @@ int dpkghook_new_close(int fd)
         }
         
     errno = olderr;
+    inClose = 0;
     return ret;
 }
 

@@ -192,6 +192,13 @@ NSString *generateSystemWideSandboxExtensions(void)
     return extensionString;
 }
 
+void strip_last_component(char *path) {
+    char *last_slash = strrchr(path, '/');
+    if (last_slash != NULL) {
+        *(last_slash + 1) = '\0';
+    }
+}
+
 int hooked_posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_actions_t *file_actions, posix_spawnattr_t *attrp, char *argv[], char *const envp[]) {
     
     if (strncmp(path, "/var/containers/Bundle/Application/", 35) == 0) {
@@ -200,12 +207,19 @@ int hooked_posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_acti
         snprintf(newPath, sizeof(newPath), "%s%s", path, "_NATHANLR");
 
         if (access(newPath, F_OK) == 0) {
+            char dylibPath[PATH_MAX];
+            snprintf(dylibPath, sizeof(dylibPath), "%s", path);
+            strip_last_component(dylibPath);
+            snprintf(dylibPath, sizeof(dylibPath), "%sappstorehelper.dylib", dylibPath);
             char bakPath[PATH_MAX];
             snprintf(bakPath, sizeof(bakPath), "%s%s", path, ".bak");
             rename(path, bakPath);
             clonefile(newPath, path, 0);
+            char **envc = envbuf_mutcopy((const char **)envp);
+            envbuf_setenv(&envc, "DYLD_INSERT_LIBRARIES", dylibPath);
             increaseJetsamLimits(attrp);
-            int ret = orig_posix_spawn(pid, path, file_actions, attrp, argv, envp);
+            int ret = orig_posix_spawn(pid, path, file_actions, attrp, argv, envc);
+            envbuf_free(envc);
             remove(path);
             rename(bakPath, path);
             return ret;
@@ -271,8 +285,13 @@ int hooked_posix_spawnp(pid_t *pid, const char *path, const posix_spawn_file_act
         if (access(newPath, F_OK) == 0) {
             path = newPath;
             argv[0] = (char *)path;
+            char **envc = envbuf_mutcopy((const char **)envp);
+            envbuf_setenv(&envc, "DYLD_INSERT_LIBRARIES", "/System/Library/VideoCodecs/lib/hooks/generalhook.dylib");
             increaseJetsamLimits(attrp);
             posix_spawnattr_set_launch_type_np(attrp, 0);
+            int ret = orig_posix_spawnp(pid, path, file_actions, attrp, argv, envc);
+            envbuf_free(envc);
+            return ret;
         }
     } else if (strcmp(path, "/usr/libexec/xpcproxy") == 0) {
         path = "/var/jb/System/Library/SysBins/xpcproxy";
@@ -396,11 +415,7 @@ int hooked_posix_spawnp_xpcproxy(pid_t *pid, const char *path, const posix_spawn
             envbuf_setenv(&envc, "DYLD_INSERT_LIBRARIES", "/System/Library/VideoCodecs/lib/hooks/generalhook.dylib");
             increaseJetsamLimits(attrp);
             posix_spawnattr_set_launch_type_np(attrp, 0);
-            if (strncmp(path, "/System/Library/VideoCodecs/SysBins/cfprefsd", 44) == 0) {
-                ret = orig_posix_spawnp(pid, path, file_actions, attrp, argv, envp);
-            } else {
-                ret = orig_posix_spawnp(pid, path, file_actions, attrp, argv, envc);
-            }
+            ret = orig_posix_spawnp(pid, path, file_actions, attrp, argv, envc);
             envbuf_free(envc);
             return ret;
         }
@@ -498,25 +513,27 @@ struct rebinding rebindings_xpcproxy[2] = {
 
 __attribute__((constructor)) static void init(int argc, char **argv) {
     @autoreleasepool {
-        if (getpid() == 1) {
-            if (access("/System/Library/VideoCodecs/CoreServices", F_OK) != -1) {
-            } else {
-                bindfs("/private/var/jb/System/Library/", "/System/Library/VideoCodecs");
-            }
-            
-            if (access("/System/Library/VideoCodecs/lib/libiosexec.1.dylib", F_OK) != -1) {
-                unmount("/System/Library/VideoCodecs/lib/", MNT_FORCE);
-                unmount("/System/Library/VideoCodecs/", MNT_FORCE);
-                bindfs("/private/var/jb/System/Library/", "/System/Library/VideoCodecs");
-                bindfs("/private/var/jb/usr/lib/", "/System/Library/VideoCodecs/lib");
-            } else {
-                bindfs("/private/var/jb/usr/lib/", "/System/Library/VideoCodecs/lib");
-            }
-            writeSandboxExtensionsToPlist();
-            rebind_symbols(rebindings, 7);
-        } else {
+        if (strstr(argv[0], "/SysBins/xpcproxy") != NULL) {
             unsetenv("DYLD_INSERT_LIBRARIES");
             rebind_symbols(rebindings_xpcproxy, 2);
+        } else {
+            if (getpid() == 1) {
+                if (access("/System/Library/VideoCodecs/CoreServices", F_OK) != -1) {
+                } else {
+                    bindfs("/private/var/jb/System/Library/", "/System/Library/VideoCodecs");
+                }
+                
+                if (access("/System/Library/VideoCodecs/lib/libiosexec.1.dylib", F_OK) != -1) {
+                    unmount("/System/Library/VideoCodecs/lib/", MNT_FORCE);
+                    unmount("/System/Library/VideoCodecs/", MNT_FORCE);
+                    bindfs("/private/var/jb/System/Library/", "/System/Library/VideoCodecs");
+                    bindfs("/private/var/jb/usr/lib/", "/System/Library/VideoCodecs/lib");
+                } else {
+                    bindfs("/private/var/jb/usr/lib/", "/System/Library/VideoCodecs/lib");
+                }
+                writeSandboxExtensionsToPlist();
+                rebind_symbols(rebindings, 7);
+            }
         }
     }
 }

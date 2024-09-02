@@ -89,32 +89,6 @@ void unsandbox(void) {
     }
 }
 
-typedef struct __SecTask * SecTaskRef;
-extern CFTypeRef SecTaskCopyValueForEntitlement(
-        SecTaskRef task,
-        NSString* entitlement,
-        CFErrorRef  _Nullable *error
-    )
-    __attribute__((weak_import));
-
-extern SecTaskRef SecTaskCreateFromSelf(CFAllocatorRef allocator)
-    __attribute__((weak_import));
-
-BOOL getEntitlementValue(NSString *key)
-{
-    if (SecTaskCreateFromSelf == NULL || SecTaskCopyValueForEntitlement == NULL)
-        return NO;
-    SecTaskRef sec_task = SecTaskCreateFromSelf(NULL);
-    if(!sec_task) return NO;
-    CFTypeRef value = SecTaskCopyValueForEntitlement(sec_task, key, nil);
-    if (value != nil)
-    {
-        CFRelease(value);
-    }
-    CFRelease(sec_task);
-    return value != nil && [(__bridge id)value boolValue];
-}
-
 char *getSandboxExtensionsFromPlist() {
     NSString *filePath = @"/System/Library/VideoCodecs/NLR_SANDBOX_EXTENSIONS.plist";
     
@@ -147,20 +121,16 @@ int enableJIT(pid_t pid)
 
 __attribute__((constructor)) static void init(int argc, char **argv, char *envp[]) {
     @autoreleasepool {
-        if (!getEntitlementValue(@"com.apple.private.security.no-container")
-        || !getEntitlementValue(@"com.apple.private.security.no-sandbox"))
-        {
             JB_SandboxExtensions = getSandboxExtensionsFromPlist();
             if (JB_SandboxExtensions) {
                 unsandbox();
                 free(JB_SandboxExtensions);
             }
-        }
         
         if (enableJIT(getpid()) != 0) {
 //            NSLog(@"[-] Failed to enable JIT");
         } else {
-//            unsetenv("DYLD_INSERT_LIBRARIES");
+            unsetenv("DYLD_INSERT_LIBRARIES");
             init_bypassDyldLibValidation();
             dlopen("/var/jb/usr/lib/TweakInject.dylib", RTLD_NOW | RTLD_GLOBAL);
         }
