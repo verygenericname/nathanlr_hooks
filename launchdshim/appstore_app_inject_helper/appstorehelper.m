@@ -74,6 +74,9 @@ int64_t jitterd(pid_t pid)
         result  = xpc_dictionary_get_int64(reply, "result");
         xpc_release(reply);
     }
+    if (message) {
+        xpc_release(message);
+    }
     return result;
 }
 

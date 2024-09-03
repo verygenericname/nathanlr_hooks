@@ -41,16 +41,6 @@ int enableJIT(pid_t pid)
 
 kern_return_t bootstrap_check_in(mach_port_t bootstrap_port, const char *service, mach_port_t *server_port);
 
-void setJetsamEnabled(bool enabled)
-{
-    int priorityToSet = enabled ? 10 : -1;
-    int rc = memorystatus_control(MEMORYSTATUS_CMD_SET_JETSAM_HIGH_WATER_MARK, getpid(), priorityToSet, NULL, 0);
-    if (rc < 0) {
-        perror("memorystatus_control");
-        exit(rc);
-    }
-}
-
 void jitterd_received_message(mach_port_t machPort, bool systemwide)
 {
         xpc_object_t message = NULL;
@@ -94,17 +84,19 @@ void jitterd_received_message(mach_port_t machPort, bool systemwide)
 //            if (err != 0) {
                  // NSLog(@"Error %d sending response", err);
 //            }
-            free(reply);
+            xpc_release(reply);
         }
     if (message) {
         xpc_release(message);
     }
 }
 
+__attribute__((constructor)) static void init() {
+    memorystatus_control(MEMORYSTATUS_CMD_SET_JETSAM_HIGH_WATER_MARK, getpid(), 10, NULL, 0);
+}
+
 int main(int argc, char* argv[])
 {
-        setJetsamEnabled(true);
-
         mach_port_t machPort = 0;
         kern_return_t kr = bootstrap_check_in(bootstrap_port, "com.hrtowii.jitterd", &machPort);
         if (kr != KERN_SUCCESS) {
