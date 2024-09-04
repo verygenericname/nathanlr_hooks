@@ -368,7 +368,7 @@ int hooked_setgid(gid_t gid) {
 
 int enableJIT(pid_t pid)
 {
-    for (int retries = 0; retries < 100; retries++)
+    for (int retries = 0; retries < 50; retries++)
     {
         jitterd(pid);
 //            NSLog(@"Hopefully enabled jit");
