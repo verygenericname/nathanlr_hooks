@@ -49,14 +49,13 @@ xpc_object_t sendjitterdMessageSystemWide(xpc_object_t xdict)
 #define JBD_MSG_PROC_SET_DEBUGGED 23
 int64_t jitterd(pid_t pid)
 {
+    int64_t result = 0;
     xpc_object_t message = xpc_dictionary_create_empty();
     xpc_dictionary_set_int64(message, "id", JBD_MSG_PROC_SET_DEBUGGED);
     xpc_dictionary_set_int64(message, "pid", pid);
     
     xpc_object_t reply = sendjitterdMessageSystemWide(message);
     xpc_release(message);
-    
-    int64_t result = 0;
     
     if (reply) {
         result = xpc_dictionary_get_int64(reply, "result");
@@ -69,7 +68,7 @@ int64_t jitterd(pid_t pid)
 char *JB_SandboxExtensions = NULL;
 
 void unsandbox(void) {
-    char extensionsCopy[strlen(JB_SandboxExtensions)];
+    char extensionsCopy[922]; // old: char extensionsCopy[strlen(JB_SandboxExtensions)];
     strcpy(extensionsCopy, JB_SandboxExtensions);
     char *extensionToken = strtok(extensionsCopy, "|");
     while (extensionToken != NULL) {

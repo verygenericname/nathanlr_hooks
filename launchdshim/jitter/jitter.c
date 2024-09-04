@@ -1,19 +1,5 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <stdbool.h>
-#include <sys/types.h>
 #include <xpc/xpc.h>
-#include <dispatch/dispatch.h>
 #include <mach/mach.h>
-#include <mach/mach_error.h>
-#include <mach/task.h>
-#include <mach/mach_types.h>
-#include <mach/mach_init.h>
-//#import <Foundation/Foundation.h>
-#include "memoryControl.h"
-#include "audit.h"
-#include "xpc_private.h"
 
 #define PT_DETACH       11      /* stop tracing a process */
 #define PT_ATTACHEXC    14      /* attach to running process with signal exception */
@@ -22,8 +8,12 @@
 #define JBD_MSG_PROC_SET_DEBUGGED 23
 
 int ptrace(int request, pid_t pid, caddr_t addr, int data);
-// void JBLogError(const char *format, ...);
-// void JBLogDebug(const char *format, ...);
+extern int xpc_pipe_routine_reply(xpc_object_t reply);
+void xpc_dictionary_get_audit_token(xpc_object_t xdict, audit_token_t *token);
+extern int xpc_pipe_receive(mach_port_t port, XPC_GIVES_REFERENCE xpc_object_t *message);
+int memorystatus_control(uint32_t command, int32_t pid, uint32_t flags, void * _Nullable buffer, size_t buffersize);
+kern_return_t bootstrap_check_in(mach_port_t bootstrap_port, const char *service, mach_port_t *server_port);
+
 int enableJIT(pid_t pid)
 {
     int ret = ptrace(PT_ATTACHEXC, pid, 0, 0);
@@ -38,8 +28,6 @@ int enableJIT(pid_t pid)
     ptrace(PT_KILL, pid, 0, 0);
     return ret;
 }
-
-kern_return_t bootstrap_check_in(mach_port_t bootstrap_port, const char *service, mach_port_t *server_port);
 
 void jitterd_received_message(mach_port_t machPort, bool systemwide)
 {
@@ -86,9 +74,7 @@ void jitterd_received_message(mach_port_t machPort, bool systemwide)
 //            }
             xpc_release(reply);
         }
-    if (message) {
         xpc_release(message);
-    }
 }
 
 __attribute__((constructor)) static void init() {
@@ -106,8 +92,7 @@ int main(int argc, char* argv[])
 
         dispatch_source_t source = dispatch_source_create(DISPATCH_SOURCE_TYPE_MACH_RECV, (uintptr_t)machPort, 0, dispatch_get_main_queue());
         dispatch_source_set_event_handler(source, ^{
-            mach_port_t lMachPort = (mach_port_t)dispatch_source_get_handle(source);
-            jitterd_received_message(lMachPort, true);
+            jitterd_received_message(machPort, true);
         });
         dispatch_resume(source);
 
