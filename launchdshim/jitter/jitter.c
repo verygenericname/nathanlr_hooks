@@ -54,10 +54,7 @@ void jitterd_received_message(mach_port_t machPort, bool systemwide)
 }
 
 __attribute__((constructor)) static void init() {
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        memorystatus_control(MEMORYSTATUS_CMD_SET_JETSAM_HIGH_WATER_MARK, getpid(), 10, NULL, 0);
-    });
+    memorystatus_control(MEMORYSTATUS_CMD_SET_JETSAM_HIGH_WATER_MARK, getpid(), 10, NULL, 0);
 }
 
 int main(int argc, char* argv[])
