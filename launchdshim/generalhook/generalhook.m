@@ -85,25 +85,11 @@ extern int xpc_pipe_routine_reply(xpc_object_t reply);
 extern XPC_RETURNS_RETAINED xpc_object_t xpc_pipe_create_from_port(mach_port_t port, uint32_t flags);
 kern_return_t bootstrap_look_up(mach_port_t port, const char *service, mach_port_t *server_port);
 
-bool jitterdSystemWideIsReachable(void)
-{
-    int sbc = sandbox_check(getpid(), "mach-lookup", SANDBOX_FILTER_GLOBAL_NAME | SANDBOX_CHECK_NO_REPORT, "com.hrtowii.jitterd.systemwide");
-    return sbc == 0;
-}
-
 mach_port_t jitterdSystemWideMachPort(void)
 {
     mach_port_t outPort = MACH_PORT_NULL;
     kern_return_t kr = KERN_SUCCESS;
-
-    if (getpid() == 1) {
-        mach_port_t self_host = mach_host_self();
-        kr = host_get_special_port(self_host, HOST_LOCAL_NODE, 16, &outPort);
-        mach_port_deallocate(mach_task_self(), self_host);
-    }
-    else {
-        kr = bootstrap_look_up(bootstrap_port, "com.hrtowii.jitterd.systemwide", &outPort);
-    }
+    kr = bootstrap_look_up(bootstrap_port, "com.hrtowii.jitterd", &outPort);
 
     if (kr != KERN_SUCCESS) return MACH_PORT_NULL;
     return outPort;
@@ -112,7 +98,6 @@ mach_port_t jitterdSystemWideMachPort(void)
 xpc_object_t sendjitterdMessageSystemWide(xpc_object_t xdict)
 {
     xpc_object_t jitterd_xreply = NULL;
-    if (jitterdSystemWideIsReachable()) {
         mach_port_t jitterdPort = jitterdSystemWideMachPort();
         if (jitterdPort != -1) {
             xpc_object_t pipe = xpc_pipe_create_from_port(jitterdPort, 0);
@@ -123,7 +108,6 @@ xpc_object_t sendjitterdMessageSystemWide(xpc_object_t xdict)
             }
             mach_port_deallocate(mach_task_self(), jitterdPort);
         }
-    }
     return jitterd_xreply;
 }
 
@@ -133,15 +117,17 @@ int64_t jitterd(pid_t pid)
     xpc_object_t message = xpc_dictionary_create_empty();
     xpc_dictionary_set_int64(message, "id", JBD_MSG_PROC_SET_DEBUGGED);
     xpc_dictionary_set_int64(message, "pid", pid);
+    
     xpc_object_t reply = sendjitterdMessageSystemWide(message);
-    int64_t result = -1;
+    xpc_release(message);
+    
+    int64_t result = 0;
+    
     if (reply) {
-        result  = xpc_dictionary_get_int64(reply, "result");
+        result = xpc_dictionary_get_int64(reply, "result");
         xpc_release(reply);
     }
-    if (message) {
-        xpc_release(message);
-    }
+    
     return result;
 }
 

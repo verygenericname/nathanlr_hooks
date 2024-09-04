@@ -9,11 +9,6 @@
 	<key>MachServices</key>
 	<dict>
 		<key>com.hrtowii.jitterd</key>
-		<dict>
-			<key>HostSpecialPort</key>
-			<integer>16</integer>
-		</dict>
-		<key>com.hrtowii.jitterd.systemwide</key>
 		<true/>
 	</dict>
 	<key>ProgramArguments</key>

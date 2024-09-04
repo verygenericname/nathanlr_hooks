@@ -185,9 +185,9 @@ NSString *generateSystemWideSandboxExtensions(void)
     [extensionString appendString:@"|"];
 
     // Ensure the whole system has access to com.opa334.jailbreakd.systemwide
-    [extensionString appendString:[NSString stringWithUTF8String:sandbox_extension_issue_mach("com.apple.app-sandbox.mach", "com.hrtowii.jitterd.systemwide", 0)]];
+    [extensionString appendString:[NSString stringWithUTF8String:sandbox_extension_issue_mach("com.apple.app-sandbox.mach", "com.hrtowii.jitterd", 0)]];
     [extensionString appendString:@"|"];
-    [extensionString appendString:[NSString stringWithUTF8String:sandbox_extension_issue_mach("com.apple.security.exception.mach-lookup.global-name", "com.hrtowii.jitterd.systemwide", 0)]];
+    [extensionString appendString:[NSString stringWithUTF8String:sandbox_extension_issue_mach("com.apple.security.exception.mach-lookup.global-name", "com.hrtowii.jitterd", 0)]];
 
     return extensionString;
 }

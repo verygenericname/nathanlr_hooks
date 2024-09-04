@@ -60,8 +60,8 @@ void jitterd_received_message(mach_port_t machPort, bool systemwide)
             // uid_t clientUid = audit_token_to_euid(auditToken);
             // pid_t clientPid = audit_token_to_pid(auditToken);
             msgId = xpc_dictionary_get_int64(message, "id");
-            char *description = xpc_copy_description(message);
-            free(description);
+//            char *description = xpc_copy_description(message);
+//            free(description);
 
             switch (msgId) {
                 case JBD_MSG_PROC_SET_DEBUGGED: {
@@ -77,10 +77,10 @@ void jitterd_received_message(mach_port_t machPort, bool systemwide)
         }
 
         if (reply) {
-            char *description = xpc_copy_description(reply);
-             // NSLog(@"responding to %s message %lld with %s", systemwide ? "systemwide" : "", msgId, description);
-            free(description);
-            err = xpc_pipe_routine_reply(reply);
+//            char *description = xpc_copy_description(reply);
+//             // NSLog(@"responding to %s message %lld with %s", systemwide ? "systemwide" : "", msgId, description);
+//            free(description);
+            xpc_pipe_routine_reply(reply);
 //            if (err != 0) {
                  // NSLog(@"Error %d sending response", err);
 //            }
@@ -100,13 +100,6 @@ int main(int argc, char* argv[])
         mach_port_t machPort = 0;
         kern_return_t kr = bootstrap_check_in(bootstrap_port, "com.hrtowii.jitterd", &machPort);
         if (kr != KERN_SUCCESS) {
-             // NSLog(@"Failed com.hrtowii.jitterd bootstrap check in: %d (%s)", kr, mach_error_string(kr));
-            return 1;
-        }
-
-        mach_port_t machPortSystemWide = 0;
-        kr = bootstrap_check_in(bootstrap_port, "com.hrtowii.jitterd.systemwide", &machPortSystemWide);
-        if (kr != KERN_SUCCESS) {
             // NSLog(@"Failed com.hrtowii.jitterd.systemwide bootstrap check in: %d (%s)", kr, mach_error_string(kr));
             return 1;
         }
@@ -114,16 +107,9 @@ int main(int argc, char* argv[])
         dispatch_source_t source = dispatch_source_create(DISPATCH_SOURCE_TYPE_MACH_RECV, (uintptr_t)machPort, 0, dispatch_get_main_queue());
         dispatch_source_set_event_handler(source, ^{
             mach_port_t lMachPort = (mach_port_t)dispatch_source_get_handle(source);
-            jitterd_received_message(lMachPort, false);
-        });
-        dispatch_resume(source);
-
-        dispatch_source_t sourceSystemWide = dispatch_source_create(DISPATCH_SOURCE_TYPE_MACH_RECV, (uintptr_t)machPortSystemWide, 0, dispatch_get_main_queue());
-        dispatch_source_set_event_handler(sourceSystemWide, ^{
-            mach_port_t lMachPort = (mach_port_t)dispatch_source_get_handle(sourceSystemWide);
             jitterd_received_message(lMachPort, true);
         });
-        dispatch_resume(sourceSystemWide);
+        dispatch_resume(source);
 
         dispatch_main();
         return 0;
