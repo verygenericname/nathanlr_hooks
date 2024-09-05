@@ -24,10 +24,9 @@ int (*orig_posix_spawn)(pid_t * __restrict pid, const char * __restrict path,
                         const posix_spawnattr_t * __restrict attrp,
                         char *const argv[ __restrict], char *const envp[ __restrict]);
 int (*orig_posix_spawnp)(pid_t *restrict pid, const char *restrict path, const posix_spawn_file_actions_t *restrict file_actions, const posix_spawnattr_t *restrict attrp, char *const argv[restrict], char *const envp[restrict]);
-bool (*xpc_dictionary_get_bool_orig)(xpc_object_t dictionary, const char *key);
+//bool (*xpc_dictionary_get_bool_orig)(xpc_object_t dictionary, const char *key);
 xpc_object_t (*xpc_dictionary_get_value_orig)(xpc_object_t xdict, const char *key);
 int (*memorystatus_control_orig)(uint32_t command, int32_t pid, uint32_t flags, void *buffer, size_t buffersize);
-int (*sysctlbyname_orig)(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen);
 
 NSString* safe_getExecutablePath()
 {
@@ -76,7 +75,7 @@ int envbuf_find(const char *envp[], const char *name)
         unsigned long nameLen = strlen(name);
         int k = 0;
         const char *env = envp[k++];
-        while (env != NULL) {
+        while (env) {
             unsigned long envLen = strlen(env);
             if (envLen > nameLen) {
                 if (!strncmp(env, name, nameLen)) {
@@ -97,7 +96,7 @@ int envbuf_len(const char *envp[])
 
     int k = 0;
     const char *env = envp[k++];
-    while (env != NULL) {
+    while (env) {
         env = envp[k++];
     }
     return k;
@@ -195,9 +194,7 @@ NSString *generateSystemWideSandboxExtensions(void)
 
 void strip_last_component(char *path) {
     char *last_slash = strrchr(path, '/');
-    if (last_slash != NULL) {
-        *(last_slash + 1) = '\0';
-    }
+    *(last_slash + 1) = '\0';
 }
 
 int hooked_posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_actions_t *file_actions, posix_spawnattr_t *attrp, char *argv[], char *const envp[]) {
@@ -212,7 +209,7 @@ int hooked_posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_acti
             strip_last_component(dylibPath);
             snprintf(dylibPath, sizeof(dylibPath), "%sappstorehelper.dylib", dylibPath);
             char bakPath[PATH_MAX];
-            snprintf(bakPath, sizeof(bakPath), "%s%s", path, ".bak");
+            snprintf(bakPath, sizeof(bakPath), "%s.bak", path);
             rename(path, bakPath);
             clonefile(newPath, path, 0);
             char **envc = envbuf_mutcopy((const char **)envp);
@@ -238,14 +235,14 @@ int hooked_posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_acti
             envbuf_free(envc);
             return ret;
         }
-    } else if (strstr(path, "/jb/Applications/") != NULL) {
+    } else if (strstr(path, "/jb/Applications/")) {
         char **envc = envbuf_mutcopy((const char **)envp);
         envbuf_setenv(&envc, "DYLD_INSERT_LIBRARIES", "/System/Library/VideoCodecs/lib/hooks/generalhook.dylib");
         increaseJetsamLimits(attrp);
         int ret = orig_posix_spawn(pid, path, file_actions, attrp, argv, envc);
         envbuf_free(envc);
         return ret;
-    } else if (strcmp(path, "/sbin/launchd") == 0) {
+    } else if (strncmp(path, "/sbin/launchd", 13) == 0) {
         path = "/var/jb/System/Library/SysBins/launchd";
         argv[0] = (char *)path;
         posix_spawnattr_set_launch_type_np(attrp, 0);
@@ -436,10 +433,10 @@ int hooked_posix_spawnp_xpcproxy(pid_t *pid, const char *path, const posix_spawn
     return orig_posix_spawnp(pid, path, file_actions, attrp, argv, envp);
 }
 
-bool hook_xpc_dictionary_get_bool(xpc_object_t dictionary, const char *key) {
-    if (!strcmp(key, "LogPerformanceStatistics")) return true;
-    else return xpc_dictionary_get_bool_orig(dictionary, key);
-}
+//bool hook_xpc_dictionary_get_bool(xpc_object_t dictionary, const char *key) {
+//    if (!strncmp(key, "LogPerformanceStatistics", 24)) return true;
+//    else return xpc_dictionary_get_bool_orig(dictionary, key);
+//}
 
 xpc_object_t hook_xpc_dictionary_get_value(xpc_object_t dict, const char *key) {
     xpc_object_t retval = xpc_dictionary_get_value_orig(dict, key);
@@ -474,13 +471,13 @@ void writeSandboxExtensionsToPlist() {
     BOOL success = [plistDict writeToFile:filePath atomically:YES];
 }
 
-struct rebinding rebindings[7] = {
+struct rebinding rebindings[6] = {
     {"csops", hooked_csops, (void *)&orig_csops},
     {"csops_audittoken", hooked_csops_audittoken, (void *)&orig_csops_audittoken},
     {"posix_spawn", hooked_posix_spawn, (void *)&orig_posix_spawn},
     {"posix_spawnp", hooked_posix_spawnp, (void *)&orig_posix_spawnp},
     {"xpc_dictionary_get_value", hook_xpc_dictionary_get_value, (void *)&xpc_dictionary_get_value_orig},
-    {"xpc_dictionary_get_bool", hook_xpc_dictionary_get_bool, (void *)&xpc_dictionary_get_bool_orig},
+//    {"xpc_dictionary_get_bool", hook_xpc_dictionary_get_bool, (void *)&xpc_dictionary_get_bool_orig},
     {"memorystatus_control", memorystatus_control_hook, (void *)&memorystatus_control_orig},
 };
 
@@ -491,7 +488,7 @@ struct rebinding rebindings_xpcproxy[2] = {
 
 __attribute__((constructor)) static void init(int argc, char **argv) {
     @autoreleasepool {
-        if (strstr(argv[0], "/SysBins/xpcproxy") != NULL) {
+        if (strstr(argv[0], "xpcproxy")) {
             unsetenv("DYLD_INSERT_LIBRARIES");
             rebind_symbols(rebindings_xpcproxy, 2);
         } else {
@@ -510,7 +507,7 @@ __attribute__((constructor)) static void init(int argc, char **argv) {
                     bindfs("/private/var/jb/usr/lib/", "/System/Library/VideoCodecs/lib");
                 }
                 writeSandboxExtensionsToPlist();
-                rebind_symbols(rebindings, 7);
+                rebind_symbols(rebindings, 6);
             }
         }
     }

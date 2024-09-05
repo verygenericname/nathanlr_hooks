@@ -71,7 +71,7 @@ void unsandbox(void) {
     char extensionsCopy[922]; // old: char extensionsCopy[strlen(JB_SandboxExtensions)];
     strcpy(extensionsCopy, JB_SandboxExtensions);
     char *extensionToken = strtok(extensionsCopy, "|");
-    while (extensionToken != NULL) {
+    while (extensionToken) {
         sandbox_extension_consume(extensionToken);
         extensionToken = strtok(NULL, "|");
     }
@@ -82,11 +82,11 @@ char *getSandboxExtensionsFromPlist() {
     
     NSString *sandboxExtensions = plistDict[@"NLR_SANDBOX_EXTENSIONS"];
     
-    if (sandboxExtensions) {
-        return strdup(sandboxExtensions.UTF8String);
-    } else {
-        return NULL;
-    }
+    //    if (sandboxExtensions) {
+            return strdup(sandboxExtensions.UTF8String); // probably never null
+    //    } else {
+    //        return NULL;
+    //    }
 }
 
 int enableJIT(pid_t pid)

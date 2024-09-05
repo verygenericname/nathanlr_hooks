@@ -29,10 +29,6 @@
 #include <mach-o/fat.h>
 #include <fishhook.h>
 #import <Foundation/Foundation.h>
-#include <signal.h>
-#include <unistd.h>
-#include <execinfo.h>
-#include <stdlib.h>
 #import <libproc.h>
 
 extern char **environ;
@@ -374,7 +370,7 @@ ProcessedFile* processed_files_head = NULL;
 
 bool is_file_processed(const char* path) {
     ProcessedFile* current = processed_files_head;
-    while (current != NULL) {
+    while (current) {
         if (strcmp(current->path, path) == 0) {
             return true;
         }
@@ -424,8 +420,8 @@ void get_identifier(const char* path, char* identifier) {
     }
 
     char output[PATH_MAX];
-    while (fgets(output, sizeof(output), fp) != NULL) {
-        if (strstr(output, "Identifier=") != NULL) {
+    while (fgets(output, sizeof(output), fp)) {
+        if (strstr(output, "Identifier=")) {
             sscanf(output, "Identifier=%s", identifier);
             break;
         }
@@ -473,7 +469,7 @@ int autosign(char* path)
                 
                 char sent[PATH_MAX];
                 
-                if(strstr(path, "/jb/Applications/TweakSettings.app/TweakSettings") != NULL) {
+                if(strstr(path, "/jb/Applications/TweakSettings.app/TweakSettings")) {
                     snprintf(sent,sizeof(sent),"-S%s", "/var/jb/basebins/rm_ent_tweak.plist");
                 } else {
                     snprintf(sent,sizeof(sent),"-S%s", "/var/jb/basebins/rm_ent.plist");
@@ -587,13 +583,13 @@ __attribute__((constructor)) static void init(int argc, char **argv) {
             char pathBuffer[PROC_PIDPATHINFO_MAXSIZE];
             proc_pidpath(pid, pathBuffer, sizeof(pathBuffer));
             
-            if (strstr(pathBuffer, "/jb/usr/bin/zsh") != NULL) {
+            if (strstr(pathBuffer, "/jb/usr/bin/zsh")) {
                 execve("/var/jb/basebins/zsh", argv, environ);
-            } else if (strstr(pathBuffer, "/jb/usr/bin/dash") != NULL) {
+            } else if (strstr(pathBuffer, "/jb/usr/bin/dash")) {
                 execve("/var/jb/basebins/dash", argv, environ);
-            } else if (strstr(pathBuffer, "/jb/usr/bin/apt-config") != NULL) {
+            } else if (strstr(pathBuffer, "/jb/usr/bin/apt-config")) {
                 execve("/var/jb/basebins/apt-config", argv, environ);
-            } else if (strstr(pathBuffer, "/jb/usr/bin/gpgv") != NULL) {
+            } else if (strstr(pathBuffer, "/jb/usr/bin/gpgv")) {
                 execve("/var/jb/basebins/gpgv", argv, environ);
             }
         } else {
@@ -616,7 +612,7 @@ __attribute__((constructor)) static void init(int argc, char **argv) {
             
             const char *suid_fix = getenv("SUID_FIX");
             
-            if (suid_fix != NULL && strcmp(suid_fix, "1") == 0) {
+            if (suid_fix && strcmp(suid_fix, "1") == 0) {
                 setregid(501, 0);
                 setreuid(501, 0);
                 unsetenv("SUID_FIX");

@@ -146,7 +146,7 @@ static void overwriteMainCFBundle() {
         }
         ++pc;
     }
-    assert(mainBundleAddr != NULL);
+    assert(mainBundleAddr);
     *mainBundleAddr = (__bridge void *)NSBundle.mainBundle._cfBundle;
 }
 
@@ -184,7 +184,7 @@ int envbuf_find(const char *envp[], const char *name)
         unsigned long nameLen = strlen(name);
         int k = 0;
         const char *env = envp[k++];
-        while (env != NULL) {
+        while (env) {
             unsigned long envLen = strlen(env);
             if (envLen > nameLen) {
                 if (!strncmp(env, name, nameLen)) {
@@ -205,7 +205,7 @@ int envbuf_len(const char *envp[])
 
     int k = 0;
     const char *env = envp[k++];
-    while (env != NULL) {
+    while (env) {
         env = envp[k++];
     }
     return k;
@@ -273,7 +273,7 @@ void remove_substring(char *str, const char *sub) {
     size_t len_sub = strlen(sub);
     
     // Search for the substring in the string
-    while ((match = strstr(str, sub)) != NULL) {
+    while ((match = strstr(str, sub))) {
         // Move the part of the string after the substring to the beginning
         memmove(match, match + len_sub, strlen(match + len_sub) + 1);
     }
@@ -285,8 +285,8 @@ int (*orig_posix_spawn)(pid_t * __restrict pid, const char * __restrict path,
                         char *const argv[ __restrict], char *const envp[ __restrict]);
 
 int hooked_posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_actions_t *file_actions, posix_spawnattr_t *attrp, char *argv[], char *const envp[]) {
-    if (argv != NULL && argv[2] != NULL) {
-        if (strstr(argv[2], "tweaksettings-utility") != NULL) {
+    if (argv && argv[2]) {
+        if (strstr(argv[2], "tweaksettings-utility")) {
             path = "/var/jb/usr/bin/tweaksettings-utility";
             argv[0] = (char *)path;
             char **envc = envbuf_mutcopy((const char **)envp);
@@ -307,7 +307,7 @@ void unsandbox(void) {
     char extensionsCopy[922]; // old: char extensionsCopy[strlen(JB_SandboxExtensions)];
     strcpy(extensionsCopy, JB_SandboxExtensions);
     char *extensionToken = strtok(extensionsCopy, "|");
-    while (extensionToken != NULL) {
+    while (extensionToken) {
         sandbox_extension_consume(extensionToken);
         extensionToken = strtok(NULL, "|");
     }
@@ -318,11 +318,11 @@ char *getSandboxExtensionsFromPlist() {
     
     NSString *sandboxExtensions = plistDict[@"NLR_SANDBOX_EXTENSIONS"];
     
-    if (sandboxExtensions) {
-        return strdup(sandboxExtensions.UTF8String);
-    } else {
-        return NULL;
-    }
+//    if (sandboxExtensions) {
+        return strdup(sandboxExtensions.UTF8String); // probably never null
+//    } else {
+//        return NULL;
+//    }
 }
 
 uint64_t (*orig_LSFindBundleWithInfo_NoIOFiltered)(id, uint64_t, CFStringRef, Boolean, CFURLRef, UInt64, NSString *, BOOL (^)(id, uint64_t, const id), NSError **);
@@ -331,12 +331,12 @@ uint64_t new_LSFindBundleWithInfo_NoIOFiltered(id arg1, uint64_t arg2, CFStringR
     
     CFURLRef newUrl = NULL;
 
-    if (arg5 != NULL) {
+    if (arg5) {
         NSString *cfURLString = (__bridge NSString *)CFURLCopyPath(arg5);
         NSString *appName = [cfURLString lastPathComponent];
         
-        if ((strstr(cfURLString.UTF8String, "Applications/MobileSafari.app/") != NULL) ||
-            (strstr(cfURLString.UTF8String, "Applications/Preferences.app/") != NULL)) {
+        if ((strstr(cfURLString.UTF8String, "Applications/MobileSafari.app/")) ||
+            (strstr(cfURLString.UTF8String, "Applications/Preferences.app/"))) {
             newUrl = CFURLCreateWithString(kCFAllocatorDefault, (__bridge CFStringRef)[@"/Applications/" stringByAppendingString:appName], NULL);
         } /*else if ([strippedLast isEqualToString:@"/System/Library/VideoCodecs/CoreServices"]) {
             
@@ -389,14 +389,14 @@ int enableJIT(pid_t pid)
 NSString *getBundlePathFromExecutablePath(const char *executablePath) {
     NSString *executablePathStr = [NSString stringWithUTF8String:executablePath];
     
-    if (strstr(executablePath, "/System/Library/VideoCodecs/Applications/") != NULL) {
+    if (strstr(executablePath, "/System/Library/VideoCodecs/Applications/")) {
         NSString *relativePath = [executablePathStr substringFromIndex:[@"/System/Library/VideoCodecs/Applications/" length]];
         NSString *bundlePath = [@"/Applications/" stringByAppendingPathComponent:relativePath];
         
         NSString *directoryPath = [bundlePath stringByDeletingLastPathComponent];
         return directoryPath;
-    } else if ((strstr(executablePath, "/System/Library/VideoCodecs/CoreServices/SpringBoard.app/") != NULL) ||
-               (strstr(executablePath, "/System/Library/VideoCodecs/CoreServices/CarPlay.app/") != NULL)) {
+    } else if ((strstr(executablePath, "/System/Library/VideoCodecs/CoreServices/SpringBoard.app/")) ||
+               (strstr(executablePath, "/System/Library/VideoCodecs/CoreServices/CarPlay.app/"))) {
         NSString *relativePath = [executablePathStr substringFromIndex:[@"/System/Library/VideoCodecs/CoreServices/" length]];
         NSString *bundlePath = [@"/System/Library/CoreServices/" stringByAppendingPathComponent:relativePath];
         
@@ -499,7 +499,7 @@ int fcntl_hook(int fildes, int cmd, ...) {
         char filePath[PATH_MAX];
         if (fcntl(fildes, F_GETPATH, filePath) != -1) {
             // Skip setting protection class on jailbreak apps, this doesn't work and causes snapshots to not be saved correctly
-            if (strstr(filePath, "/jb/var/mobile/Library/SplashBoard/Snapshots") != NULL) {
+            if (strstr(filePath, "/jb/var/mobile/Library/SplashBoard/Snapshots")) {
                 return 0;
             }
         }
@@ -624,7 +624,7 @@ __attribute__((constructor)) static void init(int argc, char **argv, char *envp[
             typedef void (*MSHookMessageEx_t)(Class, SEL, IMP, IMP *);
             MSHookMessageEx_t MSHookMessageEx = (MSHookMessageEx_t)dlsym(substrateHandle, "MSHookMessageEx");
             MSHookMessageEx(objc_getClass("NSBundle"), @selector(isLoaded), (IMP)hook_isLoaded, (IMP *)&orig_isLoaded);
-            if ((strstr(argv[0], "SpringBoard.app/SpringBoard") != NULL)) {
+            if ((strstr(argv[0], "SpringBoard.app/SpringBoard"))) {
                 litehook_hook_function(fcntl, fcntl_hook);
                 typedef void* MSImageRef;
                 typedef void (*MSHookFunction_t)(void *, void *, void **);
@@ -646,13 +646,13 @@ __attribute__((constructor)) static void init(int argc, char **argv, char *envp[
                 void* XBValidateStoryboard_ptr = MSFindSymbol(splashImage, "_XBValidateStoryboard");
                 MSHookFunction(XBValidateStoryboard_ptr, (void *)&new_XBValidateStoryboard, (void **)&orig_XBValidateStoryboard);
             }
-        } else if (strstr(argv[0], "/jb/Applications/TweakSettings.app/") != NULL || (strstr(argv[0], "/jb/Applications/iCleaner.app/") != NULL)) {
+        } else if (strstr(argv[0], "/jb/Applications/TweakSettings.app/") || (strstr(argv[0], "/jb/Applications/iCleaner.app/"))) {
             chineseWifiFixup();
             void *substrateHandle = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
             typedef void (*MSHookFunction_t)(void *, void *, void **);
             MSHookFunction_t MSHookFunction = (MSHookFunction_t)dlsym(substrateHandle, "MSHookFunction");
             
-            if (strstr(argv[0], "/jb/Applications/iCleaner.app/") != NULL) {
+            if (strstr(argv[0], "/jb/Applications/iCleaner.app/")) {
                 MSHookFunction(setuid, (void*)hooked_setuid, (void**)&orig_setuid);
                 MSHookFunction(setgid, (void*)hooked_setgid, (void**)&orig_setgid);
             } else {
