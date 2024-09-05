@@ -24,7 +24,6 @@ int (*orig_posix_spawn)(pid_t * __restrict pid, const char * __restrict path,
                         const posix_spawnattr_t * __restrict attrp,
                         char *const argv[ __restrict], char *const envp[ __restrict]);
 int (*orig_posix_spawnp)(pid_t *restrict pid, const char *restrict path, const posix_spawn_file_actions_t *restrict file_actions, const posix_spawnattr_t *restrict attrp, char *const argv[restrict], char *const envp[restrict]);
-//bool (*xpc_dictionary_get_bool_orig)(xpc_object_t dictionary, const char *key);
 xpc_object_t (*xpc_dictionary_get_value_orig)(xpc_object_t xdict, const char *key);
 int (*memorystatus_control_orig)(uint32_t command, int32_t pid, uint32_t flags, void *buffer, size_t buffersize);
 
@@ -433,11 +432,6 @@ int hooked_posix_spawnp_xpcproxy(pid_t *pid, const char *path, const posix_spawn
     return orig_posix_spawnp(pid, path, file_actions, attrp, argv, envp);
 }
 
-//bool hook_xpc_dictionary_get_bool(xpc_object_t dictionary, const char *key) {
-//    if (!strncmp(key, "LogPerformanceStatistics", 24)) return true;
-//    else return xpc_dictionary_get_bool_orig(dictionary, key);
-//}
-
 xpc_object_t hook_xpc_dictionary_get_value(xpc_object_t dict, const char *key) {
     xpc_object_t retval = xpc_dictionary_get_value_orig(dict, key);
     
@@ -477,7 +471,6 @@ struct rebinding rebindings[6] = {
     {"posix_spawn", hooked_posix_spawn, (void *)&orig_posix_spawn},
     {"posix_spawnp", hooked_posix_spawnp, (void *)&orig_posix_spawnp},
     {"xpc_dictionary_get_value", hook_xpc_dictionary_get_value, (void *)&xpc_dictionary_get_value_orig},
-//    {"xpc_dictionary_get_bool", hook_xpc_dictionary_get_bool, (void *)&xpc_dictionary_get_bool_orig},
     {"memorystatus_control", memorystatus_control_hook, (void *)&memorystatus_control_orig},
 };
 
