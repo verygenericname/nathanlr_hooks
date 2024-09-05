@@ -314,14 +314,12 @@ void unsandbox(void) {
 }
 
 char *getSandboxExtensionsFromPlist() {
-    NSString *filePath = @"/System/Library/VideoCodecs/NLR_SANDBOX_EXTENSIONS.plist";
-    
-    NSDictionary *plistDict = [NSDictionary dictionaryWithContentsOfFile:filePath];
+    NSDictionary *plistDict = [NSDictionary dictionaryWithContentsOfFile:@"/System/Library/VideoCodecs/NLR_SANDBOX_EXTENSIONS.plist"];
     
     NSString *sandboxExtensions = plistDict[@"NLR_SANDBOX_EXTENSIONS"];
     
     if (sandboxExtensions) {
-        return strdup([sandboxExtensions UTF8String]);
+        return strdup(sandboxExtensions.UTF8String);
     } else {
         return NULL;
     }
@@ -387,8 +385,6 @@ int enableJIT(pid_t pid)
 - (BOOL)makeContainerLiveReplacingContainer:(id)arg1 reason:(unsigned long long)arg2 waitForDeletion:(BOOL)arg3 withError:(id*)arg4;
 - (NSURL *)containerURL;
 @end
-
-static BOOL isNewContainer = NO;
 
 NSString *getBundlePathFromExecutablePath(const char *executablePath) {
     NSString *executablePathStr = [NSString stringWithUTF8String:executablePath];
@@ -458,6 +454,8 @@ BOOL removeFileAtPath(NSString *filePath) {
     return NO;
 }
 
+BOOL isNewContainer = NO;
+
 BOOL (*orig_makeContainerLiveReplacingContainer)(MIContainer* self, SEL _cmd, id arg1, unsigned long long arg2, BOOL arg3, id* arg4);
 BOOL new_makeContainerLiveReplacingContainer(MIContainer* self, SEL _cmd, id arg1, unsigned long long arg2, BOOL arg3, id* arg4) {
     BOOL result = orig_makeContainerLiveReplacingContainer(self, _cmd, arg1, arg2, arg3, arg4);
@@ -482,14 +480,14 @@ BOOL new_makeContainerLiveReplacingContainer(MIContainer* self, SEL _cmd, id arg
     return result;
 }
 
-static const char *execPath;
+const char *execPath;
 
 static BOOL (*orig_isLoaded)(NSBundle *self, SEL _cmd);
 
 BOOL hook_isLoaded(NSBundle *self, SEL _cmd) {
     NSString *targetBundlePath = getBundlePathFromExecutablePath(execPath);
 
-    if ([[self bundlePath] isEqualToString:targetBundlePath]) {
+    if (strcmp([self bundlePath].UTF8String, targetBundlePath.UTF8String) == 0) {
         return YES;
     }
 
@@ -544,7 +542,7 @@ BOOL preferencePlistNeedsRedirection(NSString *plistPath)
 
     if ([plistName hasPrefix:@"com.apple."] || [plistName hasPrefix:@"systemgroup.com.apple."] || [plistName hasPrefix:@"group.com.apple."]) return NO;
 
-    NSArray *additionalSystemPlistNames = @[
+    static NSArray *additionalSystemPlistNames = @[
         @".GlobalPreferences.plist",
         @".GlobalPreferences_m.plist",
         @"bluetoothaudiod.plist",

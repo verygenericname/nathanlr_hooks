@@ -78,14 +78,12 @@ void unsandbox(void) {
 }
 
 char *getSandboxExtensionsFromPlist() {
-    NSString *filePath = @"/System/Library/VideoCodecs/NLR_SANDBOX_EXTENSIONS.plist";
-    
-    NSDictionary *plistDict = [NSDictionary dictionaryWithContentsOfFile:filePath];
+    NSDictionary *plistDict = [NSDictionary dictionaryWithContentsOfFile:@"/System/Library/VideoCodecs/NLR_SANDBOX_EXTENSIONS.plist"];
     
     NSString *sandboxExtensions = plistDict[@"NLR_SANDBOX_EXTENSIONS"];
     
     if (sandboxExtensions) {
-        return strdup([sandboxExtensions UTF8String]);
+        return strdup(sandboxExtensions.UTF8String);
     } else {
         return NULL;
     }
