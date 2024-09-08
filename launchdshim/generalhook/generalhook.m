@@ -53,12 +53,12 @@ int ptrace(int, int, int, int);
 static NSString * (*orig_XBSnapshotContainerIdentity_snapshotContainerPath)(XBSnapshotContainerIdentity*, SEL);
 static NSUInteger * (*orig_trustStateForApplication)(FBSSignatureValidationService*, SEL);
 
-BOOL isJITEnabled()
-{
-    int flags;
-    csops(getpid(), 0, &flags, sizeof(flags));
-    return (flags & CS_DEBUGGED) != 0;
-}
+//BOOL isJITEnabled()
+//{
+//    int flags;
+//    csops(getpid(), 0, &flags, sizeof(flags));
+//    return (flags & CS_DEBUGGED) != 0;
+//}
 
 int csops_hook(pid_t pid, unsigned int ops, void *useraddr, size_t usersize)
 {
@@ -301,12 +301,10 @@ int hooked_posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_acti
     return orig_posix_spawn(pid, path, file_actions, attrp, argv, envp);
 }
 
-char *JB_SandboxExtensions = NULL;
+//char *JB_SandboxExtensions = NULL;
 
-void unsandbox(void) {
-    char extensionsCopy[922]; // old: char extensionsCopy[strlen(JB_SandboxExtensions)];
-    strcpy(extensionsCopy, JB_SandboxExtensions);
-    char *extensionToken = strtok(extensionsCopy, "|");
+void unsandbox(char *JB_SandboxExtensions) {
+    char *extensionToken = strtok(JB_SandboxExtensions, "|");
     while (extensionToken) {
         sandbox_extension_consume(extensionToken);
         extensionToken = strtok(NULL, "|");
@@ -368,9 +366,8 @@ int enableJIT(pid_t pid)
 {
     for (int retries = 0; retries < 50; retries++)
     {
-        jitterd(pid);
 //            NSLog(@"Hopefully enabled jit");
-        if (isJITEnabled())
+        if (jitterd(pid) == 0)
         {
 //                NSLog(@"[+] JIT has heen enabled with PT_TRACE_ME");
             return 0;
@@ -480,7 +477,7 @@ BOOL new_makeContainerLiveReplacingContainer(MIContainer* self, SEL _cmd, id arg
     return result;
 }
 
-const char *execPath;
+char *execPath;
 
 static BOOL (*orig_isLoaded)(NSBundle *self, SEL _cmd);
 
@@ -590,11 +587,11 @@ bool new_CFPrefsGetPathForTriplet(CFStringRef bundleIdentifier, CFStringRef user
 
 __attribute__((constructor)) static void init(int argc, char **argv, char *envp[]) {
     @autoreleasepool {
-            JB_SandboxExtensions = getSandboxExtensionsFromPlist();
-            if (JB_SandboxExtensions) {
-                unsandbox();
-                free(JB_SandboxExtensions);
-            }
+        char *JB_SandboxExtensions = getSandboxExtensionsFromPlist();
+//            if (JB_SandboxExtensions) {
+            unsandbox(JB_SandboxExtensions);
+            free(JB_SandboxExtensions);
+//            }
         
         if (enableJIT(getpid()) != 0) {
             //            NSLog(@"[-] Failed to enable JIT");
@@ -605,7 +602,7 @@ __attribute__((constructor)) static void init(int argc, char **argv, char *envp[
         
         litehook_hook_function(csops, csops_hook);
         litehook_hook_function(csops_audittoken, csops_audittoken_hook);
-        //        init_bypassDyldLibValidation();
+        // init_bypassDyldLibValidation();
         
         NSString *bundlePath = getBundlePathFromExecutablePath(argv[0]);
         

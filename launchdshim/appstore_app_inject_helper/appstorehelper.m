@@ -11,14 +11,14 @@ extern int xpc_pipe_routine(xpc_object_t pipe, xpc_object_t message, XPC_GIVES_R
 extern int xpc_pipe_routine_reply(xpc_object_t reply);
 extern XPC_RETURNS_RETAINED xpc_object_t xpc_pipe_create_from_port(mach_port_t port, uint32_t flags);
 kern_return_t bootstrap_look_up(mach_port_t port, const char *service, mach_port_t *server_port);
-int csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize);
+//int csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize);
 
-BOOL isJITEnabled()
-{
-    int flags;
-    csops(getpid(), 0, &flags, sizeof(flags));
-    return (flags & CS_DEBUGGED) != 0;
-}
+//BOOL isJITEnabled()
+//{
+//    int flags;
+//    csops(getpid(), 0, &flags, sizeof(flags));
+//    return (flags & CS_DEBUGGED) != 0;
+//}
 
 mach_port_t jitterdSystemWideMachPort(void)
 {
@@ -65,12 +65,8 @@ int64_t jitterd(pid_t pid)
     return result;
 }
 
-char *JB_SandboxExtensions = NULL;
-
-void unsandbox(void) {
-    char extensionsCopy[922]; // old: char extensionsCopy[strlen(JB_SandboxExtensions)];
-    strcpy(extensionsCopy, JB_SandboxExtensions);
-    char *extensionToken = strtok(extensionsCopy, "|");
+void unsandbox(char *JB_SandboxExtensions) {
+    char *extensionToken = strtok(JB_SandboxExtensions, "|");
     while (extensionToken) {
         sandbox_extension_consume(extensionToken);
         extensionToken = strtok(NULL, "|");
@@ -93,9 +89,8 @@ int enableJIT(pid_t pid)
 {
     for (int retries = 0; retries < 50; retries++)
     {
-        jitterd(pid);
 //            NSLog(@"Hopefully enabled jit");
-        if (isJITEnabled())
+        if (jitterd(pid) == 0)
         {
 //                NSLog(@"[+] JIT has heen enabled with PT_TRACE_ME");
             return 0;
@@ -107,11 +102,11 @@ int enableJIT(pid_t pid)
 
 __attribute__((constructor)) static void init(int argc, char **argv, char *envp[]) {
     @autoreleasepool {
-            JB_SandboxExtensions = getSandboxExtensionsFromPlist();
-            if (JB_SandboxExtensions) {
-                unsandbox();
+            char *JB_SandboxExtensions = getSandboxExtensionsFromPlist();
+//            if (JB_SandboxExtensions) {
+                unsandbox(JB_SandboxExtensions);
                 free(JB_SandboxExtensions);
-            }
+//            }
         
         if (enableJIT(getpid()) != 0) {
 //            NSLog(@"[-] Failed to enable JIT");
