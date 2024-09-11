@@ -5,20 +5,13 @@
 #include <string.h>
 #include <spawn.h>
 #include <utils.h>
-#include "sandbox.h"
+#include <mach/mach.h>
 
 extern int xpc_pipe_routine(xpc_object_t pipe, xpc_object_t message, XPC_GIVES_REFERENCE xpc_object_t *reply);
 extern int xpc_pipe_routine_reply(xpc_object_t reply);
 extern XPC_RETURNS_RETAINED xpc_object_t xpc_pipe_create_from_port(mach_port_t port, uint32_t flags);
 kern_return_t bootstrap_look_up(mach_port_t port, const char *service, mach_port_t *server_port);
-//int csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize);
-
-//BOOL isJITEnabled()
-//{
-//    int flags;
-//    csops(getpid(), 0, &flags, sizeof(flags));
-//    return (flags & CS_DEBUGGED) != 0;
-//}
+int64_t sandbox_extension_consume(const char *extension_token);
 
 mach_port_t jitterdSystemWideMachPort(void)
 {
@@ -65,24 +58,18 @@ int64_t jitterd(pid_t pid)
     return result;
 }
 
-void unsandbox(char *JB_SandboxExtensions) {
-    char *extensionToken = strtok(JB_SandboxExtensions, "|");
+void unsandbox() {
+    FILE *file = fopen("/System/Library/VideoCodecs/tmp/NLR_SANDBOX_EXTENSIONS", "r");
+
+    char content[922];
+    fread(content, 1, 921, file);
+    fclose(file);
+    
+    char *extensionToken = strtok(content, "|");
     while (extensionToken) {
         sandbox_extension_consume(extensionToken);
         extensionToken = strtok(NULL, "|");
     }
-}
-
-char *getSandboxExtensionsFromPlist() {
-    NSDictionary *plistDict = [NSDictionary dictionaryWithContentsOfFile:@"/System/Library/VideoCodecs/NLR_SANDBOX_EXTENSIONS.plist"];
-    
-    NSString *sandboxExtensions = plistDict[@"NLR_SANDBOX_EXTENSIONS"];
-    
-    //    if (sandboxExtensions) {
-            return strdup(sandboxExtensions.UTF8String); // probably never null
-    //    } else {
-    //        return NULL;
-    //    }
 }
 
 int enableJIT(pid_t pid)
@@ -93,24 +80,18 @@ int enableJIT(pid_t pid)
         if (jitterd(pid) == 0)
         {
 //                NSLog(@"[+] JIT has heen enabled with PT_TRACE_ME");
-            return 0;
+            return true;
         }
         usleep(10000);
     }
-    return 1;
+    return false;
 }
 
 __attribute__((constructor)) static void init(int argc, char **argv, char *envp[]) {
     @autoreleasepool {
-            char *JB_SandboxExtensions = getSandboxExtensionsFromPlist();
-//            if (JB_SandboxExtensions) {
-                unsandbox(JB_SandboxExtensions);
-                free(JB_SandboxExtensions);
-//            }
+        unsandbox();
         
-        if (enableJIT(getpid()) != 0) {
-//            NSLog(@"[-] Failed to enable JIT");
-        } else {
+        if (enableJIT(getpid())) {
             unsetenv("DYLD_INSERT_LIBRARIES");
             init_bypassDyldLibValidation();
             dlopen("/var/jb/usr/lib/TweakInject.dylib", RTLD_NOW | RTLD_GLOBAL);

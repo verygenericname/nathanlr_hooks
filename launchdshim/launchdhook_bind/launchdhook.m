@@ -2,11 +2,9 @@
 #include <xpc/xpc.h>
 #include <spawn.h>
 #include <dirent.h>
-#include <mount_bindfs.h>
 #include <sys/mount.h>
 #import <Foundation/Foundation.h>
 #import <IOKit/IOKitLib.h>
-#include "sandbox.h"
 #include <sys/clonefile.h>
 #import <mach-o/dyld.h>
 
@@ -26,19 +24,8 @@ int (*orig_posix_spawn)(pid_t * __restrict pid, const char * __restrict path,
 int (*orig_posix_spawnp)(pid_t *restrict pid, const char *restrict path, const posix_spawn_file_actions_t *restrict file_actions, const posix_spawnattr_t *restrict attrp, char *const argv[restrict], char *const envp[restrict]);
 xpc_object_t (*xpc_dictionary_get_value_orig)(xpc_object_t xdict, const char *key);
 int (*memorystatus_control_orig)(uint32_t command, int32_t pid, uint32_t flags, void *buffer, size_t buffersize);
-
-NSString* safe_getExecutablePath()
-{
-    char executablePathC[PATH_MAX];
-    uint32_t executablePathCSize = sizeof(executablePathC);
-    _NSGetExecutablePath(&executablePathC[0], &executablePathCSize);
-    return [NSString stringWithUTF8String:executablePathC];
-}
-
-NSString* getProcessName()
-{
-    return safe_getExecutablePath().lastPathComponent;
-}
+char *sandbox_extension_issue_file(const char *extension_class, const char *path, uint32_t flags);
+char *sandbox_extension_issue_mach(const char *extension_class, const char *name, uint32_t flags);
 
 char *JB_SandboxExtensions = NULL;
 
@@ -191,6 +178,19 @@ NSString *generateSystemWideSandboxExtensions(void)
     return extensionString;
 }
 
+void writeSandboxExtensionsToPlist() {
+    remove("/var/jb/System/Library/NLR_SANDBOX_EXTENSIONS.plist");
+    remove("/var/jb/System/Library/NLR_SANDBOX_EXTENSIONS.txt");
+    
+    char *filePath = "/System/Library/VideoCodecs/tmp/NLR_SANDBOX_EXTENSIONS";
+    
+    const char *sandboxExtensions = generateSystemWideSandboxExtensions().UTF8String;
+    
+    FILE *file = fopen(filePath, "w");
+    fwrite(sandboxExtensions, 1, 921, file);
+    fclose(file);
+}
+
 void strip_last_component(char *path) {
     char *last_slash = strrchr(path, '/');
     *(last_slash + 1) = '\0';
@@ -198,11 +198,11 @@ void strip_last_component(char *path) {
 
 int hooked_posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_actions_t *file_actions, posix_spawnattr_t *attrp, char *argv[], char *const envp[]) {
     
-    if (strncmp(path, "/var/containers/Bundle/Application/", 35) == 0) {
+    if (!strncmp(path, "/var/containers/Bundle/Application/", 35)) {
         char newPath[PATH_MAX];
         snprintf(newPath, sizeof(newPath), "%s_NATHANLR", path);
 
-        if (access(newPath, F_OK) == 0) {
+        if (!access(newPath, F_OK)) {
             char dylibPath[PATH_MAX];
             snprintf(dylibPath, sizeof(dylibPath), "%s", path);
             strip_last_component(dylibPath);
@@ -220,11 +220,11 @@ int hooked_posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_acti
             rename(bakPath, path);
             return ret;
         }
-    } else if (strncmp(path, "/Applications/", 14) == 0) {
+    } else if (!strncmp(path, "/Applications/", 14)) {
         char newPath[PATH_MAX];
         snprintf(newPath, sizeof(newPath), "/System/Library/VideoCodecs/Applications/%s", path + 14);
 
-        if (access(newPath, F_OK) == 0) {
+        if (!access(newPath, F_OK)) {
             path = newPath;
             argv[0] = (char *)path;
             char **envc = envbuf_mutcopy((const char **)envp);
@@ -241,7 +241,7 @@ int hooked_posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_acti
         int ret = orig_posix_spawn(pid, path, file_actions, attrp, argv, envc);
         envbuf_free(envc);
         return ret;
-    } else if (strncmp(path, "/sbin/launchd", 13) == 0) {
+    } else if (!strcmp(path, "/sbin/launchd")) {
         path = "/var/jb/System/Library/SysBins/launchd";
         argv[0] = (char *)path;
         posix_spawnattr_set_launch_type_np(attrp, 0);
@@ -253,11 +253,11 @@ int hooked_posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_acti
 
 int hooked_posix_spawnp(pid_t *pid, const char *path, const posix_spawn_file_actions_t *file_actions, posix_spawnattr_t *attrp, char *argv[], char *const envp[]) {
     
-    if (strncmp(path, "/Applications/", 14) == 0) {
+    if (!strncmp(path, "/Applications/", 14)) {
         char newPath[PATH_MAX];
         snprintf(newPath, sizeof(newPath), "/System/Library/VideoCodecs/Applications/%s", path + 14);
 
-        if (access(newPath, F_OK) == 0) {
+        if (!access(newPath, F_OK)) {
             path = newPath;
             argv[0] = (char *)path;
             char **envc = envbuf_mutcopy((const char **)envp);
@@ -268,11 +268,11 @@ int hooked_posix_spawnp(pid_t *pid, const char *path, const posix_spawn_file_act
             envbuf_free(envc);
             return ret;
         }
-    } else if (strncmp(path, "/System/Library/CoreServices/", 29) == 0) {
+    } else if (!strncmp(path, "/System/Library/CoreServices/", 29)) {
         char newPath[PATH_MAX];
         snprintf(newPath, sizeof(newPath), "/System/Library/VideoCodecs/CoreServices/%s", path + 29);
         
-        if (access(newPath, F_OK) == 0) {
+        if (!access(newPath, F_OK)) {
             path = newPath;
             argv[0] = (char *)path;
             char **envc = envbuf_mutcopy((const char **)envp);
@@ -283,7 +283,7 @@ int hooked_posix_spawnp(pid_t *pid, const char *path, const posix_spawn_file_act
             envbuf_free(envc);
             return ret;
         }
-    } else if (strcmp(path, "/usr/libexec/xpcproxy") == 0) {
+    } else if (!strcmp(path, "/usr/libexec/xpcproxy")) {
         path = "/var/jb/System/Library/SysBins/xpcproxy";
         argv[0] = (char *)path;
         char **envc = envbuf_mutcopy((const char **)envp);
@@ -299,11 +299,11 @@ int hooked_posix_spawnp(pid_t *pid, const char *path, const posix_spawn_file_act
 
 int hooked_posix_spawn_xpcproxy(pid_t *pid, const char *path, const posix_spawn_file_actions_t *file_actions, posix_spawnattr_t *attrp, char *argv[], char *const envp[]) {
 
-    if (strncmp(path, "/System/Library/PrivateFrameworks/", 34) == 0) {
+    if (!strncmp(path, "/System/Library/PrivateFrameworks/", 34)) {
         char newPath[PATH_MAX];
         snprintf(newPath, sizeof(newPath), "/System/Library/VideoCodecs/SysBins/%s", path + 34);
 
-        if (access(newPath, F_OK) == 0) {
+        if (!access(newPath, F_OK)) {
             path = newPath;
             argv[0] = (char *)path;
             char **envc = envbuf_mutcopy((const char **)envp);
@@ -314,11 +314,11 @@ int hooked_posix_spawn_xpcproxy(pid_t *pid, const char *path, const posix_spawn_
             envbuf_free(envc);
             return ret;
         }
-    } else if (strncmp(path, "/usr/libexec/", 13) == 0) {
+    } else if (!strncmp(path, "/usr/libexec/", 13)) {
         char newPath[PATH_MAX];
         snprintf(newPath, sizeof(newPath), "/System/Library/VideoCodecs/SysBins/%s", path + 13);
 
-        if (access(newPath, F_OK) == 0) {
+        if (!access(newPath, F_OK)) {
             path = newPath;
             argv[0] = (char *)path;
             char **envc = envbuf_mutcopy((const char **)envp);
@@ -336,11 +336,11 @@ int hooked_posix_spawn_xpcproxy(pid_t *pid, const char *path, const posix_spawn_
 
 int hooked_posix_spawnp_xpcproxy(pid_t *pid, const char *path, const posix_spawn_file_actions_t *file_actions, posix_spawnattr_t *attrp, char *argv[], char *const envp[]) {
     
-    if (strncmp(path, "/System/Library/PrivateFrameworks/", 34) == 0) {
+    if (!strncmp(path, "/System/Library/PrivateFrameworks/", 34)) {
         char newPath[PATH_MAX];
         snprintf(newPath, sizeof(newPath), "/System/Library/VideoCodecs/SysBins/%s", path + 34);
 
-        if (access(newPath, F_OK) == 0) {
+        if (!access(newPath, F_OK)) {
             path = newPath;
             argv[0] = (char *)path;
             char **envc = envbuf_mutcopy((const char **)envp);
@@ -351,11 +351,11 @@ int hooked_posix_spawnp_xpcproxy(pid_t *pid, const char *path, const posix_spawn
             envbuf_free(envc);
             return ret;
         }
-    } else if (strncmp(path, "/System/Library/Frameworks/", 27) == 0) {
+    } else if (!strncmp(path, "/System/Library/Frameworks/", 27)) {
         char newPath[PATH_MAX];
         snprintf(newPath, sizeof(newPath), "/System/Library/VideoCodecs/SysBins/%s", path + 27);
 
-        if (access(newPath, F_OK) == 0) {
+        if (!access(newPath, F_OK)) {
             path = newPath;
             argv[0] = (char *)path;
             char **envc = envbuf_mutcopy((const char **)envp);
@@ -366,11 +366,11 @@ int hooked_posix_spawnp_xpcproxy(pid_t *pid, const char *path, const posix_spawn
             envbuf_free(envc);
             return ret;
         }
-    } else if (strncmp(path, "/usr/libexec/", 13) == 0) {
+    } else if (!strncmp(path, "/usr/libexec/", 13)) {
         char newPath[PATH_MAX];
         snprintf(newPath, sizeof(newPath), "/System/Library/VideoCodecs/SysBins/%s", path + 13);
 
-        if (access(newPath, F_OK) == 0) {
+        if (!access(newPath, F_OK)) {
             path = newPath;
             argv[0] = (char *)path;
             char **envc = envbuf_mutcopy((const char **)envp);
@@ -381,27 +381,11 @@ int hooked_posix_spawnp_xpcproxy(pid_t *pid, const char *path, const posix_spawn
             envbuf_free(envc);
             return ret;
         }
-    } else if (strncmp(path, "/usr/sbin/", 10) == 0) {
+    } else if (!strncmp(path, "/usr/sbin/", 10)) {
         char newPath[PATH_MAX];
         snprintf(newPath, sizeof(newPath), "/System/Library/VideoCodecs/SysBins/%s", path + 10);
 
-        if (access(newPath, F_OK) == 0) {
-            int ret = 0;
-            path = newPath;
-            argv[0] = (char *)path;
-            char **envc = envbuf_mutcopy((const char **)envp);
-            envbuf_setenv(&envc, "DYLD_INSERT_LIBRARIES", "/System/Library/VideoCodecs/lib/hooks/generalhook.dylib");
-            increaseJetsamLimits(attrp);
-            posix_spawnattr_set_launch_type_np(attrp, 0);
-            ret = orig_posix_spawnp(pid, path, file_actions, attrp, argv, envc);
-            envbuf_free(envc);
-            return ret;
-        }
-    } else if (strncmp(path, "/usr/bin/", 9) == 0) {
-        char newPath[PATH_MAX];
-        snprintf(newPath, sizeof(newPath), "/System/Library/VideoCodecs/SysBins/%s", path + 9);
-
-        if (access(newPath, F_OK) == 0) {
+        if (!access(newPath, F_OK)) {
             path = newPath;
             argv[0] = (char *)path;
             char **envc = envbuf_mutcopy((const char **)envp);
@@ -412,11 +396,26 @@ int hooked_posix_spawnp_xpcproxy(pid_t *pid, const char *path, const posix_spawn
             envbuf_free(envc);
             return ret;
         }
-    } else if (strncmp(path, "/System/Library/CoreServices/", 29) == 0) {
+    } else if (!strncmp(path, "/usr/bin/", 9)) {
+        char newPath[PATH_MAX];
+        snprintf(newPath, sizeof(newPath), "/System/Library/VideoCodecs/SysBins/%s", path + 9);
+
+        if (!access(newPath, F_OK)) {
+            path = newPath;
+            argv[0] = (char *)path;
+            char **envc = envbuf_mutcopy((const char **)envp);
+            envbuf_setenv(&envc, "DYLD_INSERT_LIBRARIES", "/System/Library/VideoCodecs/lib/hooks/generalhook.dylib");
+            increaseJetsamLimits(attrp);
+            posix_spawnattr_set_launch_type_np(attrp, 0);
+            int ret = orig_posix_spawnp(pid, path, file_actions, attrp, argv, envc);
+            envbuf_free(envc);
+            return ret;
+        }
+    } else if (!strncmp(path, "/System/Library/CoreServices/", 29)) {
         char newPath[PATH_MAX];
         snprintf(newPath, sizeof(newPath), "/System/Library/VideoCodecs/CoreServices/%s", path + 29);
         
-        if (access(newPath, F_OK) == 0) {
+        if (!access(newPath, F_OK)) {
             path = newPath;
             argv[0] = (char *)path;
             char **envc = envbuf_mutcopy((const char **)envp);
@@ -453,18 +452,6 @@ int memorystatus_control_hook(uint32_t command, int32_t pid, uint32_t flags, voi
     return memorystatus_control_orig(command, pid, flags, buffer, buffersize);
 }
 
-void writeSandboxExtensionsToPlist() {
-    NSString *filePath = @"/var/jb/System/Library/NLR_SANDBOX_EXTENSIONS.plist";
-    
-    remove(filePath.UTF8String);
-    
-    NSString *sandboxExtensions = generateSystemWideSandboxExtensions();
-    
-    NSDictionary *plistDict = @{@"NLR_SANDBOX_EXTENSIONS": sandboxExtensions};
-    
-    BOOL success = [plistDict writeToFile:filePath atomically:YES];
-}
-
 struct rebinding rebindings[6] = {
     {"csops", hooked_csops, (void *)&orig_csops},
     {"csops_audittoken", hooked_csops_audittoken, (void *)&orig_csops_audittoken},
@@ -479,29 +466,36 @@ struct rebinding rebindings_xpcproxy[2] = {
     {"posix_spawnp", hooked_posix_spawnp_xpcproxy, (void *)&orig_posix_spawnp},
 };
 
+typedef struct tmpfs_mount_args {
+    uint64_t max_pages; /* maximum amount of memory pages to be used for this tmpfs*/
+    uint64_t max_nodes; /* maximum amount of inodes in this tmpfs */
+    uint64_t case_insensitive; /* 1 = case insensitive, 0 = case sensitive */
+} tmpfs_mount_args_t;
+
 __attribute__((constructor)) static void init(int argc, char **argv) {
     @autoreleasepool {
-        if (strstr(argv[0], "xpcproxy")) {
+        if (getpid() != 1) {
             unsetenv("DYLD_INSERT_LIBRARIES");
+//            sandboxExtensions = strdup(getenv("NLR_SANDBOX_EXTENSIONS"));
+//            unsetenv("NLR_SANDBOX_EXTENSIONS");
             rebind_symbols(rebindings_xpcproxy, 2);
         } else {
-            if (getpid() == 1) {
-                if (access("/System/Library/VideoCodecs/CoreServices", F_OK) != -1) {
-                } else {
-                    bindfs("/private/var/jb/System/Library/", "/System/Library/VideoCodecs");
-                }
-                
-                if (access("/System/Library/VideoCodecs/lib/libiosexec.1.dylib", F_OK) != -1) {
-                    unmount("/System/Library/VideoCodecs/lib/", MNT_FORCE);
-                    unmount("/System/Library/VideoCodecs/", MNT_FORCE);
-                    bindfs("/private/var/jb/System/Library/", "/System/Library/VideoCodecs");
-                    bindfs("/private/var/jb/usr/lib/", "/System/Library/VideoCodecs/lib");
-                } else {
-                    bindfs("/private/var/jb/usr/lib/", "/System/Library/VideoCodecs/lib");
-                }
-                writeSandboxExtensionsToPlist();
-                rebind_symbols(rebindings, 6);
+            if (!access("/System/Library/VideoCodecs/lib/libiosexec.1.dylib", F_OK)) {
+                unmount("/System/Library/VideoCodecs/lib/", MNT_FORCE);
+                unmount("/System/Library/VideoCodecs/tmp", MNT_FORCE);
+                unmount("/System/Library/VideoCodecs/", MNT_FORCE);
+                mount("bindfs", "/System/Library/VideoCodecs", MNT_RDONLY, (void *)"/private/var/jb/System/Library");
+                struct tmpfs_mount_args arg = {.max_pages = (20000 / 16384), .max_nodes = UINT8_MAX, .case_insensitive = 0};
+                mount("tmpfs", "/System/Library/VideoCodecs/tmp", 0, &arg);
+                mount("bindfs", "/System/Library/VideoCodecs/lib", MNT_RDONLY, (void *)"/private/var/jb/usr/lib");
+            } else {
+                mount("bindfs", "/System/Library/VideoCodecs", MNT_RDONLY, (void *)"/private/var/jb/System/Library");
+                struct tmpfs_mount_args arg = {.max_pages = (20000 / 16384), .max_nodes = UINT8_MAX, .case_insensitive = 0};
+                mount("tmpfs", "/System/Library/VideoCodecs/tmp", 0, &arg);
+                mount("bindfs", "/System/Library/VideoCodecs/lib", MNT_RDONLY, (void *)"/private/var/jb/usr/lib");
             }
+            writeSandboxExtensionsToPlist();
+            rebind_symbols(rebindings, 6);
         }
     }
 }

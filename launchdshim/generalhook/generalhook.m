@@ -13,7 +13,6 @@
 #include <objc/runtime.h>
 #include <utils.h>
 #include <litehook.h>
-#include "sandbox.h"
 
 #define SYSCALL_CSOPS 0xA9
 #define SYSCALL_CSOPS_AUDITTOKEN 0xAA
@@ -42,6 +41,7 @@ void chineseWifiFixup(void)
 int csops_audittoken(pid_t pid, unsigned int  ops, void * useraddr, size_t usersize, audit_token_t * token);
 int csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize);
 int ptrace(int, int, int, int);
+int64_t sandbox_extension_consume(const char *extension_token);
 
 @interface XBSnapshotContainerIdentity : NSObject <NSCopying>
 @property (nonatomic, readonly, copy) NSString* bundleIdentifier;
@@ -301,26 +301,18 @@ int hooked_posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_acti
     return orig_posix_spawn(pid, path, file_actions, attrp, argv, envp);
 }
 
-//char *JB_SandboxExtensions = NULL;
+void unsandbox() {
+    FILE *file = fopen("/System/Library/VideoCodecs/tmp/NLR_SANDBOX_EXTENSIONS", "r");
 
-void unsandbox(char *JB_SandboxExtensions) {
-    char *extensionToken = strtok(JB_SandboxExtensions, "|");
+    char content[922];
+    fread(content, 1, 921, file);
+    fclose(file);
+    
+    char *extensionToken = strtok(content, "|");
     while (extensionToken) {
         sandbox_extension_consume(extensionToken);
         extensionToken = strtok(NULL, "|");
     }
-}
-
-char *getSandboxExtensionsFromPlist() {
-    NSDictionary *plistDict = [NSDictionary dictionaryWithContentsOfFile:@"/System/Library/VideoCodecs/NLR_SANDBOX_EXTENSIONS.plist"];
-    
-    NSString *sandboxExtensions = plistDict[@"NLR_SANDBOX_EXTENSIONS"];
-    
-//    if (sandboxExtensions) {
-        return strdup(sandboxExtensions.UTF8String); // probably never null
-//    } else {
-//        return NULL;
-//    }
 }
 
 uint64_t (*orig_LSFindBundleWithInfo_NoIOFiltered)(id, uint64_t, CFStringRef, Boolean, CFURLRef, UInt64, NSString *, BOOL (^)(id, uint64_t, const id), NSError **);
@@ -370,11 +362,11 @@ int enableJIT(pid_t pid)
         if (jitterd(pid) == 0)
         {
 //                NSLog(@"[+] JIT has heen enabled with PT_TRACE_ME");
-            return 0;
+            return true;
         }
         usleep(10000);
     }
-    return 1;
+    return false;
 }
 
 @class MIContainer;
@@ -587,14 +579,10 @@ bool new_CFPrefsGetPathForTriplet(CFStringRef bundleIdentifier, CFStringRef user
 
 __attribute__((constructor)) static void init(int argc, char **argv, char *envp[]) {
     @autoreleasepool {
-        char *JB_SandboxExtensions = getSandboxExtensionsFromPlist();
-//            if (JB_SandboxExtensions) {
-            unsandbox(JB_SandboxExtensions);
-            free(JB_SandboxExtensions);
-//            }
+        unsandbox();
         
-        if (enableJIT(getpid()) != 0) {
-            //            NSLog(@"[-] Failed to enable JIT");
+        if (!enableJIT(getpid())) {
+//            NSLog(@"[-] Failed to enable JIT");
             exit(1);
         }
         
