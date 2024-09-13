@@ -111,12 +111,12 @@ xpc_object_t sendjitterdMessageSystemWide(xpc_object_t xdict)
     return jitterd_xreply;
 }
 
-#define JBD_MSG_PROC_SET_DEBUGGED 23
+//#define JBD_MSG_PROC_SET_DEBUGGED 23
 int64_t jitterd(pid_t pid)
 {
     int64_t result = 0;
     xpc_object_t message = xpc_dictionary_create_empty();
-    xpc_dictionary_set_int64(message, "id", JBD_MSG_PROC_SET_DEBUGGED);
+//    xpc_dictionary_set_int64(message, "id", JBD_MSG_PROC_SET_DEBUGGED);
     xpc_dictionary_set_int64(message, "pid", pid);
     
     xpc_object_t reply = sendjitterdMessageSystemWide(message);
@@ -304,8 +304,8 @@ int hooked_posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_acti
 void unsandbox() {
     FILE *file = fopen("/System/Library/VideoCodecs/tmp/NLR_SANDBOX_EXTENSIONS", "r");
 
-    char content[922];
-    fread(content, 1, 921, file);
+    char content[763];
+    fread(content, 1, 762, file);
     fclose(file);
     
     char *extensionToken = strtok(content, "|");

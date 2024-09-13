@@ -38,7 +38,7 @@ void jitterd_received_message(mach_port_t machPort, bool systemwide)
     xpc_object_t reply = xpc_dictionary_create_reply(message);
     
     if (xpc_get_type(message) == XPC_TYPE_DICTIONARY) {
-        if (xpc_dictionary_get_int64(message, "id") == JBD_MSG_PROC_SET_DEBUGGED) {
+        if (xpc_dictionary_get_value(message, "pid") != NULL) {
             int64_t result = 0;
             pid_t pid = xpc_dictionary_get_int64(message, "pid");
             result = enableJIT(pid);
