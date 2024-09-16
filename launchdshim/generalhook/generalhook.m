@@ -3,7 +3,7 @@
 #include <dlfcn.h>
 #include <dirent.h>
 #include <string.h>
-//#include <substrate.h>
+#include <substrate.h>
 //#include <libhooker/libhooker.h>
 #include <spawn.h>
 #import <Foundation/Foundation.h>
@@ -22,12 +22,18 @@
 - (id)_cfBundle;
 @end
 
-void* _CTServerConnectionCreate(CFAllocatorRef, void *, void *);
+typedef void (*CTServerConnectionSetCellularUsagePolicy_t)(CFTypeRef* ct, NSString* identifier, NSDictionary* policies);
+typedef void *(*CTServerConnectionCreate_t)(CFAllocatorRef, void *, void *);
 
-int64_t _CTServerConnectionSetCellularUsagePolicy(CFTypeRef* ct, NSString* identifier, NSDictionary* policies);
 
 void chineseWifiFixup(void)
 {
+    void *coreTelephonyFramework = dlopen("/System/Library/Frameworks/CoreTelephony.framework/CoreTelephony", RTLD_LAZY);
+    CTServerConnectionSetCellularUsagePolicy_t _CTServerConnectionSetCellularUsagePolicy =
+        (CTServerConnectionSetCellularUsagePolicy_t)dlsym(coreTelephonyFramework, "_CTServerConnectionSetCellularUsagePolicy");
+    CTServerConnectionCreate_t _CTServerConnectionCreate =
+        (CTServerConnectionCreate_t)dlsym(coreTelephonyFramework, "_CTServerConnectionCreate");
+    
     _CTServerConnectionSetCellularUsagePolicy(
         _CTServerConnectionCreate(kCFAllocatorDefault, NULL, NULL),
         NSBundle.mainBundle.bundleIdentifier,
@@ -36,10 +42,14 @@ void chineseWifiFixup(void)
             @"kCTWiFiDataUsagePolicy" : @"kCTCellularDataUsagePolicyAlwaysAllow"
         }
     );
+    dlclose(coreTelephonyFramework);
 }
 
-int csops_audittoken(pid_t pid, unsigned int  ops, void * useraddr, size_t usersize, audit_token_t * token);
 int csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize);
+int csops_audittoken(pid_t pid, unsigned int  ops, void * useraddr, size_t usersize, audit_token_t * token);
+int (*orig_csops)(pid_t pid, unsigned int ops, void *useraddr, size_t usersize);
+int (*orig_csops_audittoken)(pid_t pid, unsigned int  ops, void * useraddr, size_t usersize, audit_token_t * token);
+int (*orig_fcntl)(int fildes, int cmd, ...);
 int ptrace(int, int, int, int);
 int64_t sandbox_extension_consume(const char *extension_token);
 
@@ -62,7 +72,7 @@ static NSUInteger * (*orig_trustStateForApplication)(FBSSignatureValidationServi
 
 int csops_hook(pid_t pid, unsigned int ops, void *useraddr, size_t usersize)
 {
-    int rv = syscall(SYSCALL_CSOPS, pid, ops, useraddr, usersize);
+    int rv = orig_csops(pid, ops, useraddr, usersize);
     if (rv != 0) return rv;
     if (ops == 0) {
         *((uint32_t *)useraddr) |= 0x4000000;
@@ -72,7 +82,7 @@ int csops_hook(pid_t pid, unsigned int ops, void *useraddr, size_t usersize)
 
 int csops_audittoken_hook(pid_t pid, unsigned int ops, void *useraddr, size_t usersize, audit_token_t *token)
 {
-    int rv = syscall(SYSCALL_CSOPS_AUDITTOKEN, pid, ops, useraddr, usersize, token);
+    int rv = orig_csops_audittoken(pid, ops, useraddr, usersize, token);
     if (rv != 0) return rv;
     if (ops == 0) {
         *((uint32_t *)useraddr) |= 0x4000000;
@@ -85,46 +95,32 @@ extern int xpc_pipe_routine_reply(xpc_object_t reply);
 extern XPC_RETURNS_RETAINED xpc_object_t xpc_pipe_create_from_port(mach_port_t port, uint32_t flags);
 kern_return_t bootstrap_look_up(mach_port_t port, const char *service, mach_port_t *server_port);
 
-mach_port_t jitterdSystemWideMachPort(void)
-{
-    mach_port_t outPort = MACH_PORT_NULL;
-    kern_return_t kr = KERN_SUCCESS;
-    kr = bootstrap_look_up(bootstrap_port, "com.hrtowii.jitterd", &outPort);
-
-    if (kr != KERN_SUCCESS) return MACH_PORT_NULL;
-    return outPort;
-}
-
-xpc_object_t sendjitterdMessageSystemWide(xpc_object_t xdict)
-{
-    xpc_object_t jitterd_xreply = NULL;
-        mach_port_t jitterdPort = jitterdSystemWideMachPort();
-        if (jitterdPort != -1) {
-            xpc_object_t pipe = xpc_pipe_create_from_port(jitterdPort, 0);
-            if (pipe) {
-                int err = xpc_pipe_routine(pipe, xdict, &jitterd_xreply);
-                if (err != 0) jitterd_xreply = NULL;
-                xpc_release(pipe);
-            }
-            mach_port_deallocate(mach_task_self(), jitterdPort);
-        }
-    return jitterd_xreply;
-}
-
-//#define JBD_MSG_PROC_SET_DEBUGGED 23
 int64_t jitterd(pid_t pid)
 {
     int64_t result = 0;
     xpc_object_t message = xpc_dictionary_create_empty();
-//    xpc_dictionary_set_int64(message, "id", JBD_MSG_PROC_SET_DEBUGGED);
     xpc_dictionary_set_int64(message, "pid", pid);
     
-    xpc_object_t reply = sendjitterdMessageSystemWide(message);
+    xpc_object_t jitterd_xreply = NULL;
+    mach_port_t jitterdPort = MACH_PORT_NULL;
+    kern_return_t kr = bootstrap_look_up(bootstrap_port, "com.hrtowii.jitterd", &jitterdPort);
+    
+//    if (kr != KERN_SUCCESS) return -1;
+    
+    xpc_object_t pipe = xpc_pipe_create_from_port(jitterdPort, 0);
+    if (pipe) {
+        int err = xpc_pipe_routine(pipe, message, &jitterd_xreply);
+        if (err != 0) jitterd_xreply = NULL;
+        xpc_release(pipe);
+    }
+    
+    mach_port_deallocate(mach_task_self(), jitterdPort);
+    
     xpc_release(message);
     
-    if (reply) {
-        result = xpc_dictionary_get_int64(reply, "result");
-        xpc_release(reply);
+    if (jitterd_xreply) {
+        result = xpc_dictionary_get_int64(jitterd_xreply, "result");
+        xpc_release(jitterd_xreply);
     }
     
     return result;
@@ -325,8 +321,8 @@ uint64_t new_LSFindBundleWithInfo_NoIOFiltered(id arg1, uint64_t arg2, CFStringR
         NSString *cfURLString = (__bridge NSString *)CFURLCopyPath(arg5);
         NSString *appName = [cfURLString lastPathComponent];
         
-        if ((strstr(cfURLString.UTF8String, "Applications/MobileSafari.app/")) ||
-            (strstr(cfURLString.UTF8String, "Applications/Preferences.app/"))) {
+        if ((strcmp(cfURLString.UTF8String, "/System/Library/VideoCodecs/Applications/MobileSafari.app/") == 0) ||
+            (strcmp(cfURLString.UTF8String, "/System/Library/VideoCodecs/Applications/Preferences.app/") == 0)) {
             newUrl = CFURLCreateWithString(kCFAllocatorDefault, (__bridge CFStringRef)[@"/Applications/" stringByAppendingString:appName], NULL);
         } /*else if ([strippedLast isEqualToString:@"/System/Library/VideoCodecs/CoreServices"]) {
             
@@ -358,10 +354,8 @@ int enableJIT(pid_t pid)
 {
     for (int retries = 0; retries < 50; retries++)
     {
-//            NSLog(@"Hopefully enabled jit");
-        if (jitterd(pid) == 0)
+        if (!jitterd(pid))
         {
-//                NSLog(@"[+] JIT has heen enabled with PT_TRACE_ME");
             return true;
         }
         usleep(10000);
@@ -507,7 +501,7 @@ int fcntl_hook(int fildes, int cmd, ...) {
     const void *arg9 = va_arg(a, void *);
     const void *arg10 = va_arg(a, void *);
     va_end(a);
-    return syscall(SYSCALL_FCNTL, fildes, cmd, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10);
+    return orig_fcntl(fildes, cmd, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10);
 }
 
 int (*orig_XBValidateStoryboard);
@@ -588,15 +582,18 @@ __attribute__((constructor)) static void init(int argc, char **argv, char *envp[
         
         unsetenv("DYLD_INSERT_LIBRARIES");
         
-        litehook_hook_function(csops, csops_hook);
-        litehook_hook_function(csops_audittoken, csops_audittoken_hook);
+//        litehook_hook_function(csops, csops_hook);
+//        litehook_hook_function(csops_audittoken, csops_audittoken_hook);
+        MSHookFunction(csops, (void*)csops_hook, (void**)&orig_csops);
+        MSHookFunction(csops_audittoken, (void*)csops_audittoken_hook, (void**)&orig_csops_audittoken);
+        
         // init_bypassDyldLibValidation();
         
         NSString *bundlePath = getBundlePathFromExecutablePath(argv[0]);
         
         if (bundlePath != nil) {
             NSBundle *appBundle = [[NSBundle alloc] initWithPath:bundlePath];
-            Class bundleClass = objc_getClass("NSBundle");
+//            Class bundleClass = objc_getClass("NSBundle");
             
             overwriteMainNSBundle(appBundle);
             overwriteMainCFBundle();
@@ -605,19 +602,20 @@ __attribute__((constructor)) static void init(int argc, char **argv, char *envp[
             objcArgv[0] = appBundle.executablePath;
             [NSProcessInfo.processInfo performSelector:@selector(setArguments:) withObject:objcArgv];
             execPath = argv[0];
-            void *substrateHandle = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
-            typedef void (*MSHookMessageEx_t)(Class, SEL, IMP, IMP *);
-            MSHookMessageEx_t MSHookMessageEx = (MSHookMessageEx_t)dlsym(substrateHandle, "MSHookMessageEx");
+//            void *substrateHandle = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
+//            typedef void (*MSHookMessageEx_t)(Class, SEL, IMP, IMP *);
+//            MSHookMessageEx_t MSHookMessageEx = (MSHookMessageEx_t)dlsym(substrateHandle, "MSHookMessageEx");
             MSHookMessageEx(objc_getClass("NSBundle"), @selector(isLoaded), (IMP)hook_isLoaded, (IMP *)&orig_isLoaded);
-            if ((strstr(argv[0], "SpringBoard.app/SpringBoard"))) {
-                litehook_hook_function(fcntl, fcntl_hook);
-                typedef void* MSImageRef;
-                typedef void (*MSHookFunction_t)(void *, void *, void **);
-                MSHookFunction_t MSHookFunction = (MSHookFunction_t)dlsym(substrateHandle, "MSHookFunction");
-                typedef void* (*MSGetImageByName_t)(const char *image_name);
-                typedef void* (*MSFindSymbol_t)(void *image, const char *name);
-                MSGetImageByName_t MSGetImageByName = (MSGetImageByName_t)dlsym(substrateHandle, "MSGetImageByName");
-                MSFindSymbol_t MSFindSymbol = (MSFindSymbol_t)dlsym(substrateHandle, "MSFindSymbol");
+            if ((strcmp(argv[0], "/System/Library/VideoCodecs/CoreServices/SpringBoard.app/SpringBoard")) == 0) {
+//                litehook_hook_function(fcntl, fcntl_hook);
+                MSHookFunction(fcntl, (void*)fcntl_hook, (void**)&orig_fcntl);
+//                typedef void* MSImageRef;
+//                typedef void (*MSHookFunction_t)(void *, void *, void **);
+//                MSHookFunction_t MSHookFunction = (MSHookFunction_t)dlsym(substrateHandle, "MSHookFunction");
+//                typedef void* (*MSGetImageByName_t)(const char *image_name);
+//                typedef void* (*MSFindSymbol_t)(void *image, const char *name);
+//                MSGetImageByName_t MSGetImageByName = (MSGetImageByName_t)dlsym(substrateHandle, "MSGetImageByName");
+//                MSFindSymbol_t MSFindSymbol = (MSFindSymbol_t)dlsym(substrateHandle, "MSFindSymbol");
                 
                 Class class_XBSnapshotContainerIdentity = objc_getClass("XBSnapshotContainerIdentity");
                 MSHookMessageEx(
@@ -633,9 +631,9 @@ __attribute__((constructor)) static void init(int argc, char **argv, char *envp[
             }
         } else if (strstr(argv[0], "/jb/Applications/TweakSettings.app/") || (strstr(argv[0], "/jb/Applications/iCleaner.app/"))) {
             chineseWifiFixup();
-            void *substrateHandle = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
-            typedef void (*MSHookFunction_t)(void *, void *, void **);
-            MSHookFunction_t MSHookFunction = (MSHookFunction_t)dlsym(substrateHandle, "MSHookFunction");
+//            void *substrateHandle = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
+//            typedef void (*MSHookFunction_t)(void *, void *, void **);
+//            MSHookFunction_t MSHookFunction = (MSHookFunction_t)dlsym(substrateHandle, "MSHookFunction");
             
             if (strstr(argv[0], "/jb/Applications/iCleaner.app/")) {
                 MSHookFunction(setuid, (void*)hooked_setuid, (void**)&orig_setuid);
@@ -644,15 +642,15 @@ __attribute__((constructor)) static void init(int argc, char **argv, char *envp[
                 MSHookFunction(posix_spawn, (void*)hooked_posix_spawn, (void**)&orig_posix_spawn);
             }
         } else if (strcmp(argv[0], "/System/Library/VideoCodecs/SysBins/CoreTelephony.framework/Support/CommCenter") == 0) {
-            void *substrateHandle = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
-            typedef void* MSImageRef;
-            typedef void* (*MSGetImageByName_t)(const char *image_name);
-            typedef void* (*MSFindSymbol_t)(void *image, const char *name);
-
-            MSGetImageByName_t MSGetImageByName = (MSGetImageByName_t)dlsym(substrateHandle, "MSGetImageByName");
-            MSFindSymbol_t MSFindSymbol = (MSFindSymbol_t)dlsym(substrateHandle, "MSFindSymbol");
-            typedef void (*MSHookFunction_t)(void *, void *, void **);
-            MSHookFunction_t MSHookFunction = (MSHookFunction_t)dlsym(substrateHandle, "MSHookFunction");
+//            void *substrateHandle = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
+//            typedef void* MSImageRef;
+//            typedef void* (*MSGetImageByName_t)(const char *image_name);
+//            typedef void* (*MSFindSymbol_t)(void *image, const char *name);
+//
+//            MSGetImageByName_t MSGetImageByName = (MSGetImageByName_t)dlsym(substrateHandle, "MSGetImageByName");
+//            MSFindSymbol_t MSFindSymbol = (MSFindSymbol_t)dlsym(substrateHandle, "MSFindSymbol");
+//            typedef void (*MSHookFunction_t)(void *, void *, void **);
+//            MSHookFunction_t MSHookFunction = (MSHookFunction_t)dlsym(substrateHandle, "MSHookFunction");
             
             MSImageRef coreServicesImage = MSGetImageByName("/System/Library/Frameworks/CoreServices.framework/CoreServices");
             uint64_t* _LSFindBundleWithInfo_NoIOFiltered_ptr = MSFindSymbol(coreServicesImage, "__LSFindBundleWithInfo_NoIOFiltered");
@@ -660,7 +658,7 @@ __attribute__((constructor)) static void init(int argc, char **argv, char *envp[
             return;
         } else if (strcmp(argv[0], "/System/Library/VideoCodecs/SysBins/SocialLayer.framework/sociallayerd.app/sociallayerd") == 0) {
             NSBundle *appBundle = [[NSBundle alloc] initWithPath:@"/System/Library/PrivateFrameworks/SocialLayer.framework/sociallayerd.app"];
-            Class bundleClass = objc_getClass("NSBundle");
+//            Class bundleClass = objc_getClass("NSBundle");
             
             overwriteMainNSBundle(appBundle);
             overwriteMainCFBundle();
@@ -669,23 +667,23 @@ __attribute__((constructor)) static void init(int argc, char **argv, char *envp[
             objcArgv[0] = appBundle.executablePath;
             [NSProcessInfo.processInfo performSelector:@selector(setArguments:) withObject:objcArgv];
             
-            void *substrateHandle = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
-            typedef void* MSImageRef;
-            typedef void* (*MSGetImageByName_t)(const char *image_name);
-            typedef void* (*MSFindSymbol_t)(void *image, const char *name);
-            
-            MSGetImageByName_t MSGetImageByName = (MSGetImageByName_t)dlsym(substrateHandle, "MSGetImageByName");
-            MSFindSymbol_t MSFindSymbol = (MSFindSymbol_t)dlsym(substrateHandle, "MSFindSymbol");
-            typedef void (*MSHookFunction_t)(void *, void *, void **);
-            MSHookFunction_t MSHookFunction = (MSHookFunction_t)dlsym(substrateHandle, "MSHookFunction");
+//            void *substrateHandle = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
+//            typedef void* MSImageRef;
+//            typedef void* (*MSGetImageByName_t)(const char *image_name);
+//            typedef void* (*MSFindSymbol_t)(void *image, const char *name);
+//            
+//            MSGetImageByName_t MSGetImageByName = (MSGetImageByName_t)dlsym(substrateHandle, "MSGetImageByName");
+//            MSFindSymbol_t MSFindSymbol = (MSFindSymbol_t)dlsym(substrateHandle, "MSFindSymbol");
+//            typedef void (*MSHookFunction_t)(void *, void *, void **);
+//            MSHookFunction_t MSHookFunction = (MSHookFunction_t)dlsym(substrateHandle, "MSHookFunction");
             
             MSImageRef coreServicesImage = MSGetImageByName("/System/Library/Frameworks/CoreServices.framework/CoreServices");
             uint64_t* _LSFindBundleWithInfo_NoIOFiltered_ptr = MSFindSymbol(coreServicesImage, "__LSFindBundleWithInfo_NoIOFiltered");
             MSHookFunction(_LSFindBundleWithInfo_NoIOFiltered_ptr, (void *)&new_LSFindBundleWithInfo_NoIOFiltered, (void **)&orig_LSFindBundleWithInfo_NoIOFiltered);
         } else if (strcmp(argv[0], "/System/Library/VideoCodecs/SysBins/installd") == 0) {
-            void *substrateHandle = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
-            typedef void (*MSHookMessageEx_t)(Class, SEL, IMP, IMP *);
-            MSHookMessageEx_t MSHookMessageEx = (MSHookMessageEx_t)dlsym(substrateHandle, "MSHookMessageEx");
+//            void *substrateHandle = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
+//            typedef void (*MSHookMessageEx_t)(Class, SEL, IMP, IMP *);
+//            MSHookMessageEx_t MSHookMessageEx = (MSHookMessageEx_t)dlsym(substrateHandle, "MSHookMessageEx");
             
             Class class_MIContainer = objc_getClass("MIContainer");
             MSHookMessageEx(
@@ -695,16 +693,16 @@ __attribute__((constructor)) static void init(int argc, char **argv, char *envp[
                             (IMP*)&orig_makeContainerLiveReplacingContainer
                             );
         } else if (strcmp(argv[0], "/System/Library/VideoCodecs/SysBins/cfprefsd") == 0) {
-            void *substrateHandle = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
-            typedef void* MSImageRef;
-            typedef void (*MSHookFunction_t)(void *, void *, void **);
-            MSHookFunction_t MSHookFunction = (MSHookFunction_t)dlsym(substrateHandle, "MSHookFunction");
-            
-            typedef void* (*MSGetImageByName_t)(const char *image_name);
-            typedef void* (*MSFindSymbol_t)(void *image, const char *name);
-
-            MSGetImageByName_t MSGetImageByName = (MSGetImageByName_t)dlsym(substrateHandle, "MSGetImageByName");
-            MSFindSymbol_t MSFindSymbol = (MSFindSymbol_t)dlsym(substrateHandle, "MSFindSymbol");
+//            void *substrateHandle = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
+//            typedef void* MSImageRef;
+//            typedef void (*MSHookFunction_t)(void *, void *, void **);
+//            MSHookFunction_t MSHookFunction = (MSHookFunction_t)dlsym(substrateHandle, "MSHookFunction");
+//            
+//            typedef void* (*MSGetImageByName_t)(const char *image_name);
+//            typedef void* (*MSFindSymbol_t)(void *image, const char *name);
+//
+//            MSGetImageByName_t MSGetImageByName = (MSGetImageByName_t)dlsym(substrateHandle, "MSGetImageByName");
+//            MSFindSymbol_t MSFindSymbol = (MSFindSymbol_t)dlsym(substrateHandle, "MSFindSymbol");
             
             MSImageRef coreFoundationImage = MSGetImageByName("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation");
             void* CFPrefsGetPathForTriplet_ptr = MSFindSymbol(coreFoundationImage, "__CFPrefsGetPathForTriplet");

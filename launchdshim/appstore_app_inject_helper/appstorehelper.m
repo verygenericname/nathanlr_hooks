@@ -13,46 +13,32 @@ extern XPC_RETURNS_RETAINED xpc_object_t xpc_pipe_create_from_port(mach_port_t p
 kern_return_t bootstrap_look_up(mach_port_t port, const char *service, mach_port_t *server_port);
 int64_t sandbox_extension_consume(const char *extension_token);
 
-mach_port_t jitterdSystemWideMachPort(void)
-{
-    mach_port_t outPort = MACH_PORT_NULL;
-    kern_return_t kr = KERN_SUCCESS;
-    kr = bootstrap_look_up(bootstrap_port, "com.hrtowii.jitterd", &outPort);
-
-    if (kr != KERN_SUCCESS) return MACH_PORT_NULL;
-    return outPort;
-}
-
-xpc_object_t sendjitterdMessageSystemWide(xpc_object_t xdict)
-{
-    xpc_object_t jitterd_xreply = NULL;
-        mach_port_t jitterdPort = jitterdSystemWideMachPort();
-        if (jitterdPort != -1) {
-            xpc_object_t pipe = xpc_pipe_create_from_port(jitterdPort, 0);
-            if (pipe) {
-                int err = xpc_pipe_routine(pipe, xdict, &jitterd_xreply);
-                if (err != 0) jitterd_xreply = NULL;
-                xpc_release(pipe);
-            }
-            mach_port_deallocate(mach_task_self(), jitterdPort);
-        }
-    return jitterd_xreply;
-}
-
-//#define JBD_MSG_PROC_SET_DEBUGGED 23
 int64_t jitterd(pid_t pid)
 {
     int64_t result = 0;
     xpc_object_t message = xpc_dictionary_create_empty();
-//    xpc_dictionary_set_int64(message, "id", JBD_MSG_PROC_SET_DEBUGGED);
     xpc_dictionary_set_int64(message, "pid", pid);
     
-    xpc_object_t reply = sendjitterdMessageSystemWide(message);
+    xpc_object_t jitterd_xreply = NULL;
+    mach_port_t jitterdPort = MACH_PORT_NULL;
+    kern_return_t kr = bootstrap_look_up(bootstrap_port, "com.hrtowii.jitterd", &jitterdPort);
+    
+//    if (kr != KERN_SUCCESS) return -1;
+    
+    xpc_object_t pipe = xpc_pipe_create_from_port(jitterdPort, 0);
+    if (pipe) {
+        int err = xpc_pipe_routine(pipe, message, &jitterd_xreply);
+        if (err != 0) jitterd_xreply = NULL;
+        xpc_release(pipe);
+    }
+    
+    mach_port_deallocate(mach_task_self(), jitterdPort);
+    
     xpc_release(message);
     
-    if (reply) {
-        result = xpc_dictionary_get_int64(reply, "result");
-        xpc_release(reply);
+    if (jitterd_xreply) {
+        result = xpc_dictionary_get_int64(jitterd_xreply, "result");
+        xpc_release(jitterd_xreply);
     }
     
     return result;
@@ -76,10 +62,8 @@ int enableJIT(pid_t pid)
 {
     for (int retries = 0; retries < 50; retries++)
     {
-//            NSLog(@"Hopefully enabled jit");
-        if (jitterd(pid) == 0)
+        if (!jitterd(pid))
         {
-//                NSLog(@"[+] JIT has heen enabled with PT_TRACE_ME");
             return true;
         }
         usleep(10000);

@@ -86,7 +86,7 @@ kern_return_t litehook_hook_function(void *source, void *target)
 	uint64_t target64 = (uint64_t)xpaci((uint64_t)target);
 
 	kr = litehook_unprotect((vm_address_t)toHook, 5*4);
-	if (kr != KERN_SUCCESS) return kr;
+//	if (kr != KERN_SUCCESS) return kr;
 
 	toHook[0] = movk(16, target64 >> 0, 0);
 	toHook[1] = movk(16, target64 >> 16, 16);
@@ -96,7 +96,7 @@ kern_return_t litehook_hook_function(void *source, void *target)
 	uint32_t hookSize = 5 * sizeof(uint32_t);
 
 	kr = litehook_protect((vm_address_t)toHook, hookSize);
-	if (kr != KERN_SUCCESS) return kr;
+//	if (kr != KERN_SUCCESS) return kr;
 
 	sys_icache_invalidate(toHook, hookSize);
 

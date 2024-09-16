@@ -171,7 +171,7 @@ void writeSandboxExtensionsToPlist() {
     
     snprintf(extensionString, 762, "%s|%s|%s", sb1, sb2, sb3);
     
-    memcpy(extensionString + 761, sb3 + (761 - (287 + 289 + 2)), 1);
+    memcpy(extensionString + 761, "d", 1);
     
     free(sb1);
     free(sb2);

@@ -18,7 +18,7 @@ int enableJIT(pid_t pid)
     if (ptrace(PT_ATTACHEXC, pid, 0, 0) != 0) return -1;
     for (int retries = 0; retries < 50; retries++) {
         usleep(1000); // decreased from 10000, probably better
-        if (ptrace(PT_DETACH, pid, 0, 0) == 0) {
+        if (!ptrace(PT_DETACH, pid, 0, 0)) {
             return 0;
         }
     }
@@ -26,7 +26,7 @@ int enableJIT(pid_t pid)
     return -1;
 }
 
-void jitterd_received_message(mach_port_t machPort, bool systemwide)
+void jitterd_received_message(mach_port_t machPort)
 {
     xpc_object_t message = NULL;
     int err = xpc_pipe_receive(machPort, &message);
@@ -38,19 +38,14 @@ void jitterd_received_message(mach_port_t machPort, bool systemwide)
     xpc_object_t reply = xpc_dictionary_create_reply(message);
     
     if (xpc_get_type(message) == XPC_TYPE_DICTIONARY) {
-        if (xpc_dictionary_get_value(message, "pid") != NULL) {
-            int64_t result = 0;
-            pid_t pid = xpc_dictionary_get_int64(message, "pid");
-            result = enableJIT(pid);
+        if (xpc_dictionary_get_value(message, "pid")) {
+            int64_t result = enableJIT(xpc_dictionary_get_int64(message, "pid"));
             xpc_dictionary_set_int64(reply, "result", result);
         }
-        
-        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-            xpc_release(message);
-            xpc_pipe_routine_reply(reply);
-            xpc_release(reply);
-        });
     }
+    xpc_pipe_routine_reply(reply);
+    xpc_release(message);
+    xpc_release(reply);
 }
 
 __attribute__((constructor)) static void init() {
@@ -64,7 +59,7 @@ int main(int argc, char* argv[])
 
         dispatch_source_t source = dispatch_source_create(DISPATCH_SOURCE_TYPE_MACH_RECV, machPort, 0, dispatch_get_main_queue());
         dispatch_source_set_event_handler(source, ^{
-            jitterd_received_message(machPort, true);
+            jitterd_received_message(machPort);
         });
         dispatch_resume(source);
 
