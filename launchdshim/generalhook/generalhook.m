@@ -12,7 +12,7 @@
 #include <mach-o/dyld_images.h>
 #include <objc/runtime.h>
 #include <utils.h>
-#include <litehook.h>
+//#include <litehook.h>
 
 #define SYSCALL_CSOPS 0xA9
 #define SYSCALL_CSOPS_AUDITTOKEN 0xAA
@@ -47,9 +47,6 @@ void chineseWifiFixup(void)
 
 int csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize);
 int csops_audittoken(pid_t pid, unsigned int  ops, void * useraddr, size_t usersize, audit_token_t * token);
-int (*orig_csops)(pid_t pid, unsigned int ops, void *useraddr, size_t usersize);
-int (*orig_csops_audittoken)(pid_t pid, unsigned int  ops, void * useraddr, size_t usersize, audit_token_t * token);
-int (*orig_fcntl)(int fildes, int cmd, ...);
 int ptrace(int, int, int, int);
 int64_t sandbox_extension_consume(const char *extension_token);
 
@@ -72,7 +69,7 @@ static NSUInteger * (*orig_trustStateForApplication)(FBSSignatureValidationServi
 
 int csops_hook(pid_t pid, unsigned int ops, void *useraddr, size_t usersize)
 {
-    int rv = orig_csops(pid, ops, useraddr, usersize);
+    int rv = syscall(SYSCALL_CSOPS, pid, ops, useraddr, usersize);
     if (rv != 0) return rv;
     if (ops == 0) {
         *((uint32_t *)useraddr) |= 0x4000000;
@@ -82,7 +79,7 @@ int csops_hook(pid_t pid, unsigned int ops, void *useraddr, size_t usersize)
 
 int csops_audittoken_hook(pid_t pid, unsigned int ops, void *useraddr, size_t usersize, audit_token_t *token)
 {
-    int rv = orig_csops_audittoken(pid, ops, useraddr, usersize, token);
+    int rv = syscall(SYSCALL_CSOPS_AUDITTOKEN, pid, ops, useraddr, usersize, token);
     if (rv != 0) return rv;
     if (ops == 0) {
         *((uint32_t *)useraddr) |= 0x4000000;
@@ -339,9 +336,6 @@ uint64_t new_LSFindBundleWithInfo_NoIOFiltered(id arg1, uint64_t arg2, CFStringR
     return ret;
 }
 
-int (*orig_setuid)(uid_t uid);
-int (*orig_setgid)(gid_t gid);
-
 int hooked_setuid(uid_t uid) {
     return 0;
 }
@@ -501,10 +495,9 @@ int fcntl_hook(int fildes, int cmd, ...) {
     const void *arg9 = va_arg(a, void *);
     const void *arg10 = va_arg(a, void *);
     va_end(a);
-    return orig_fcntl(fildes, cmd, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10);
+    return syscall(SYSCALL_FCNTL, fildes, cmd, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10);
 }
 
-int (*orig_XBValidateStoryboard);
 int new_XBValidateStoryboard() {
     return 0;
 }
@@ -584,8 +577,8 @@ __attribute__((constructor)) static void init(int argc, char **argv, char *envp[
         
 //        litehook_hook_function(csops, csops_hook);
 //        litehook_hook_function(csops_audittoken, csops_audittoken_hook);
-        MSHookFunction(csops, (void*)csops_hook, (void**)&orig_csops);
-        MSHookFunction(csops_audittoken, (void*)csops_audittoken_hook, (void**)&orig_csops_audittoken);
+        MSHookFunction(csops, (void*)csops_hook, 0);
+        MSHookFunction(csops_audittoken, (void*)csops_audittoken_hook, 0);
         
         // init_bypassDyldLibValidation();
         
@@ -602,13 +595,11 @@ __attribute__((constructor)) static void init(int argc, char **argv, char *envp[
             objcArgv[0] = appBundle.executablePath;
             [NSProcessInfo.processInfo performSelector:@selector(setArguments:) withObject:objcArgv];
             execPath = argv[0];
-//            void *substrateHandle = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
-//            typedef void (*MSHookMessageEx_t)(Class, SEL, IMP, IMP *);
-//            MSHookMessageEx_t MSHookMessageEx = (MSHookMessageEx_t)dlsym(substrateHandle, "MSHookMessageEx");
+
             MSHookMessageEx(objc_getClass("NSBundle"), @selector(isLoaded), (IMP)hook_isLoaded, (IMP *)&orig_isLoaded);
             if ((strcmp(argv[0], "/System/Library/VideoCodecs/CoreServices/SpringBoard.app/SpringBoard")) == 0) {
 //                litehook_hook_function(fcntl, fcntl_hook);
-                MSHookFunction(fcntl, (void*)fcntl_hook, (void**)&orig_fcntl);
+                MSHookFunction(fcntl, (void*)fcntl_hook, 0);
 //                typedef void* MSImageRef;
 //                typedef void (*MSHookFunction_t)(void *, void *, void **);
 //                MSHookFunction_t MSHookFunction = (MSHookFunction_t)dlsym(substrateHandle, "MSHookFunction");
@@ -617,9 +608,8 @@ __attribute__((constructor)) static void init(int argc, char **argv, char *envp[
 //                MSGetImageByName_t MSGetImageByName = (MSGetImageByName_t)dlsym(substrateHandle, "MSGetImageByName");
 //                MSFindSymbol_t MSFindSymbol = (MSFindSymbol_t)dlsym(substrateHandle, "MSFindSymbol");
                 
-                Class class_XBSnapshotContainerIdentity = objc_getClass("XBSnapshotContainerIdentity");
                 MSHookMessageEx(
-                                class_XBSnapshotContainerIdentity,
+                                objc_getClass("XBSnapshotContainerIdentity"),
                                 @selector(snapshotContainerPath),
                                 (IMP)&XBSnapshotContainer_Identity_snapshotContainerPath,
                                 (IMP*)&orig_XBSnapshotContainerIdentity_snapshotContainerPath
@@ -627,7 +617,7 @@ __attribute__((constructor)) static void init(int argc, char **argv, char *envp[
                 
                 MSImageRef splashImage = MSGetImageByName("/System/Library/PrivateFrameworks/SplashBoard.framework/SplashBoard");
                 void* XBValidateStoryboard_ptr = MSFindSymbol(splashImage, "_XBValidateStoryboard");
-                MSHookFunction(XBValidateStoryboard_ptr, (void *)&new_XBValidateStoryboard, (void **)&orig_XBValidateStoryboard);
+                MSHookFunction(XBValidateStoryboard_ptr, (void *)&new_XBValidateStoryboard, 0);
             }
         } else if (strstr(argv[0], "/jb/Applications/TweakSettings.app/") || (strstr(argv[0], "/jb/Applications/iCleaner.app/"))) {
             chineseWifiFixup();
@@ -636,8 +626,8 @@ __attribute__((constructor)) static void init(int argc, char **argv, char *envp[
 //            MSHookFunction_t MSHookFunction = (MSHookFunction_t)dlsym(substrateHandle, "MSHookFunction");
             
             if (strstr(argv[0], "/jb/Applications/iCleaner.app/")) {
-                MSHookFunction(setuid, (void*)hooked_setuid, (void**)&orig_setuid);
-                MSHookFunction(setgid, (void*)hooked_setgid, (void**)&orig_setgid);
+                MSHookFunction(setuid, (void*)hooked_setuid, 0);
+                MSHookFunction(setgid, (void*)hooked_setgid, 0);
             } else {
                 MSHookFunction(posix_spawn, (void*)hooked_posix_spawn, (void**)&orig_posix_spawn);
             }
@@ -653,7 +643,7 @@ __attribute__((constructor)) static void init(int argc, char **argv, char *envp[
 //            MSHookFunction_t MSHookFunction = (MSHookFunction_t)dlsym(substrateHandle, "MSHookFunction");
             
             MSImageRef coreServicesImage = MSGetImageByName("/System/Library/Frameworks/CoreServices.framework/CoreServices");
-            uint64_t* _LSFindBundleWithInfo_NoIOFiltered_ptr = MSFindSymbol(coreServicesImage, "__LSFindBundleWithInfo_NoIOFiltered");
+            void* _LSFindBundleWithInfo_NoIOFiltered_ptr = MSFindSymbol(coreServicesImage, "__LSFindBundleWithInfo_NoIOFiltered");
             MSHookFunction(_LSFindBundleWithInfo_NoIOFiltered_ptr, (void *)&new_LSFindBundleWithInfo_NoIOFiltered, (void **)&orig_LSFindBundleWithInfo_NoIOFiltered);
             return;
         } else if (strcmp(argv[0], "/System/Library/VideoCodecs/SysBins/SocialLayer.framework/sociallayerd.app/sociallayerd") == 0) {
@@ -678,16 +668,15 @@ __attribute__((constructor)) static void init(int argc, char **argv, char *envp[
 //            MSHookFunction_t MSHookFunction = (MSHookFunction_t)dlsym(substrateHandle, "MSHookFunction");
             
             MSImageRef coreServicesImage = MSGetImageByName("/System/Library/Frameworks/CoreServices.framework/CoreServices");
-            uint64_t* _LSFindBundleWithInfo_NoIOFiltered_ptr = MSFindSymbol(coreServicesImage, "__LSFindBundleWithInfo_NoIOFiltered");
+            void* _LSFindBundleWithInfo_NoIOFiltered_ptr = MSFindSymbol(coreServicesImage, "__LSFindBundleWithInfo_NoIOFiltered");
             MSHookFunction(_LSFindBundleWithInfo_NoIOFiltered_ptr, (void *)&new_LSFindBundleWithInfo_NoIOFiltered, (void **)&orig_LSFindBundleWithInfo_NoIOFiltered);
         } else if (strcmp(argv[0], "/System/Library/VideoCodecs/SysBins/installd") == 0) {
 //            void *substrateHandle = dlopen("/var/jb/Library/Frameworks/CydiaSubstrate.framework/CydiaSubstrate", RTLD_NOW);
 //            typedef void (*MSHookMessageEx_t)(Class, SEL, IMP, IMP *);
 //            MSHookMessageEx_t MSHookMessageEx = (MSHookMessageEx_t)dlsym(substrateHandle, "MSHookMessageEx");
             
-            Class class_MIContainer = objc_getClass("MIContainer");
             MSHookMessageEx(
-                            class_MIContainer,
+                            objc_getClass("MIContainer"),
                             @selector(makeContainerLiveReplacingContainer:reason:waitForDeletion:withError:),
                             (IMP)&new_makeContainerLiveReplacingContainer,
                             (IMP*)&orig_makeContainerLiveReplacingContainer
