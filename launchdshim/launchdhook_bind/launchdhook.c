@@ -11,39 +11,75 @@
 #define POSIX_SPAWNATTR_OFF_MEMLIMIT_ACTIVE 0x48
 #define POSIX_SPAWNATTR_OFF_MEMLIMIT_INACTIVE 0x4C
 #define JETSAM_MULTIPLIER 3
+#define SYSCALL_CSOPS 0xA9
+#define SYSCALL_CSOPS_AUDITTOKEN 0xAA
 
 int posix_spawnattr_set_launch_type_np(posix_spawnattr_t *attr, uint8_t launch_type);
-
-int (*orig_csops)(pid_t pid, unsigned int  ops, void * useraddr, size_t usersize);
-int (*orig_csops_audittoken)(pid_t pid, unsigned int  ops, void * useraddr, size_t usersize, audit_token_t * token);
 int (*orig_posix_spawn)(pid_t * __restrict pid, const char * __restrict path,
                         const posix_spawn_file_actions_t *file_actions,
                         const posix_spawnattr_t * __restrict attrp,
                         char *const argv[ __restrict], char *const envp[ __restrict]);
-int (*orig_posix_spawnp)(pid_t *restrict pid, const char *restrict path, const posix_spawn_file_actions_t *restrict file_actions, const posix_spawnattr_t *restrict attrp, char *const argv[restrict], char *const envp[restrict]);
+int (*orig_posix_spawnp)(pid_t *restrict pid, const char *restrict pathx, const posix_spawn_file_actions_t *restrict file_actions, const posix_spawnattr_t *restrict attrp, char *const argv[restrict], char *const envp[restrict]);
 xpc_object_t (*xpc_dictionary_get_value_orig)(xpc_object_t xdict, const char *key);
 int (*memorystatus_control_orig)(uint32_t command, int32_t pid, uint32_t flags, void *buffer, size_t buffersize);
 char *sandbox_extension_issue_file(const char *extension_class, const char *path, uint32_t flags);
 char *sandbox_extension_issue_mach(const char *extension_class, const char *name, uint32_t flags);
 
-char *JB_SandboxExtensions = NULL;
+char *boot_hash = NULL;
+char launchdPath[PATH_MAX];
+char xpcPath[PATH_MAX];
 
-int hooked_csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize) {
-    int result = orig_csops(pid, ops, useraddr, usersize);
-    if (result != 0) return result;
-    if (ops == 0) {
-        *((uint32_t *)useraddr) |= 0x4000000;
-    }
+int get_boot_manifest_hash(char hash[97])
+{
+  const UInt8 *bytes;
+  CFIndex length;
+  io_registry_entry_t chosen = IORegistryEntryFromPath(0, "IODeviceTree:/chosen");
+  if (!MACH_PORT_VALID(chosen)) return 1;
+  CFDataRef manifestHash = (CFDataRef)IORegistryEntryCreateCFProperty(chosen, CFSTR("boot-manifest-hash"), kCFAllocatorDefault, 0);
+  IOObjectRelease(chosen);
+  if (manifestHash == NULL || CFGetTypeID(manifestHash) != CFDataGetTypeID())
+  {
+    if (manifestHash) CFRelease(manifestHash);
+    return 1;
+  }
+  length = CFDataGetLength(manifestHash);
+  bytes = CFDataGetBytePtr(manifestHash);
+  for (int i = 0; i < length; i++)
+  {
+    snprintf(&hash[i * 2], 3, "%02X", bytes[i]);
+  }
+  CFRelease(manifestHash);
+  return 0;
+}
+
+char* return_boot_manifest_hash_main(void) {
+  static char hash[97];
+  int ret = get_boot_manifest_hash(hash);
+  if (ret != 0) {
+    fprintf(stderr, "could not get boot manifest hash\n");
+    return "";
+  }
+    static char result[115];
+    sprintf(result, "/private/preboot/%s", hash);
     return result;
 }
 
-int hooked_csops_audittoken(pid_t pid, unsigned int ops, void * useraddr, size_t usersize, audit_token_t * token) {
-    int result = orig_csops_audittoken(pid, ops, useraddr, usersize, token);
-    if (result != 0) return result;
+int hooked_csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize) {
+    int rv = syscall(SYSCALL_CSOPS, pid, ops, useraddr, usersize);
+    if (rv != 0) return rv;
     if (ops == 0) {
         *((uint32_t *)useraddr) |= 0x4000000;
     }
-    return result;
+    return rv;
+}
+
+int hooked_csops_audittoken(pid_t pid, unsigned int ops, void * useraddr, size_t usersize, audit_token_t * token) {
+    int rv = syscall(SYSCALL_CSOPS_AUDITTOKEN, pid, ops, useraddr, usersize, token);
+    if (rv != 0) return rv;
+    if (ops == 0) {
+        *((uint32_t *)useraddr) |= 0x4000000;
+    }
+    return rv;
 }
 
 //void change_launchtype(posix_spawnattr_t *attrp, const char *restrict path) {
@@ -157,9 +193,6 @@ void increaseJetsamLimits(posix_spawnattr_t *attrp) {
 }
 
 void writeSandboxExtensionsToPlist() {
-    remove("/var/jb/System/Library/NLR_SANDBOX_EXTENSIONS.plist");
-    remove("/var/jb/System/Library/NLR_SANDBOX_EXTENSIONS.txt");
-    
     char *sandboxPath = "/var/jb";
     char *filePath = "/System/Library/VideoCodecs/tmp/NLR_SANDBOX_EXTENSIONS";
     char extensionString[762];
@@ -207,7 +240,7 @@ int hooked_posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_acti
             increaseJetsamLimits(attrp);
             int ret = orig_posix_spawn(pid, path, file_actions, attrp, argv, envc);
             envbuf_free(envc);
-            remove(path);
+//            remove(path);
             rename(bakPath, path);
             return ret;
         }
@@ -233,7 +266,7 @@ int hooked_posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_acti
         envbuf_free(envc);
         return ret;
     } else if (!strcmp(path, "/sbin/launchd")) {
-        path = "/var/jb/System/Library/SysBins/launchd";
+        path = launchdPath;
         argv[0] = (char *)path;
         posix_spawnattr_set_launch_type_np(attrp, 0);
     }
@@ -245,7 +278,7 @@ int hooked_posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_acti
 int hooked_posix_spawnp(pid_t *pid, const char *path, const posix_spawn_file_actions_t *file_actions, posix_spawnattr_t *attrp, char *argv[], char *const envp[]) {
     
     if (!strcmp(path, "/usr/libexec/xpcproxy")) {
-        path = "/var/jb/System/Library/SysBins/xpcproxy";
+        path = xpcPath;
         argv[0] = (char *)path;
         char **envc = envbuf_mutcopy((const char **)envp);
         envbuf_setenv(&envc, "DYLD_INSERT_LIBRARIES", "/System/Library/VideoCodecs/lib/hooks/launchdhook.dylib");
@@ -444,8 +477,8 @@ int memorystatus_control_hook(uint32_t command, int32_t pid, uint32_t flags, voi
 }
 
 struct rebinding rebindings[6] = {
-    {"csops", hooked_csops, (void *)&orig_csops},
-    {"csops_audittoken", hooked_csops_audittoken, (void *)&orig_csops_audittoken},
+    {"csops", hooked_csops, 0},
+    {"csops_audittoken", hooked_csops_audittoken, 0},
     {"posix_spawn", hooked_posix_spawn, (void *)&orig_posix_spawn},
     {"posix_spawnp", hooked_posix_spawnp, (void *)&orig_posix_spawnp},
     {"xpc_dictionary_get_value", hook_xpc_dictionary_get_value, (void *)&xpc_dictionary_get_value_orig},
@@ -470,6 +503,17 @@ __attribute__((constructor)) static void init(int argc, char **argv) {
         //            unsetenv("NLR_SANDBOX_EXTENSIONS");
         rebind_symbols(rebindings_xpcproxy, 2);
     } else {
+        boot_hash = strdup(return_boot_manifest_hash_main());
+        snprintf(launchdPath, sizeof(launchdPath), "%s/jb/System/Library/SysBins/launchd", boot_hash);
+        snprintf(xpcPath, sizeof(xpcPath), "%s/jb/System/Library/SysBins/xpcproxy", boot_hash);
+        if (access("/var/jb/.procursus_strapped", F_OK)) {
+            rename("/var/jb", "/var/tmp/oldfolder");
+            
+            char tmp[PATH_MAX];
+            snprintf(tmp, sizeof(tmp), "%s/jb", boot_hash);
+            symlink(tmp, "/var/jb");
+            lchown("/var/jb", 0, 0);
+        }
         if (!access("/System/Library/VideoCodecs/lib/libiosexec.1.dylib", F_OK)) {
             unmount("/System/Library/VideoCodecs/lib/", MNT_FORCE);
             unmount("/System/Library/VideoCodecs/tmp", MNT_FORCE);

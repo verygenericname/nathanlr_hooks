@@ -469,11 +469,7 @@ int autosign(char* path)
                 
                 char sent[PATH_MAX];
                 
-                if(strstr(path, "/jb/Applications/TweakSettings.app/TweakSettings")) {
-                    snprintf(sent,sizeof(sent),"-S%s", "/var/jb/basebins/rm_ent_tweak.plist");
-                } else {
-                    snprintf(sent,sizeof(sent),"-S%s", "/var/jb/basebins/rm_ent.plist");
-                }
+                snprintf(sent,sizeof(sent),"-S%s", "/var/jb/basebins/rm_ent.plist");
 
                 char* args[] = {"ldid_dpkg_autosign", "-M", sent, path, identifier_arg, NULL};
                 int status = execBinary("/var/jb/basebins/ldid_dpkg_autosign", args);

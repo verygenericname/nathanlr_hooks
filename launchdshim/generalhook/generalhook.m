@@ -12,11 +12,14 @@
 #include <mach-o/dyld_images.h>
 #include <objc/runtime.h>
 #include <utils.h>
+#import <IOKit/IOKitLib.h>
 //#include <litehook.h>
 
 #define SYSCALL_CSOPS 0xA9
 #define SYSCALL_CSOPS_AUDITTOKEN 0xAA
 #define SYSCALL_FCNTL 0x5C
+
+char jbPath[PATH_MAX];
 
 @interface NSBundle(private)
 - (id)_cfBundle;
@@ -24,6 +27,41 @@
 
 typedef void (*CTServerConnectionSetCellularUsagePolicy_t)(CFTypeRef* ct, NSString* identifier, NSDictionary* policies);
 typedef void *(*CTServerConnectionCreate_t)(CFAllocatorRef, void *, void *);
+
+int get_boot_manifest_hash(char hash[97])
+{
+  const UInt8 *bytes;
+  CFIndex length;
+  io_registry_entry_t chosen = IORegistryEntryFromPath(0, "IODeviceTree:/chosen");
+  if (!MACH_PORT_VALID(chosen)) return 1;
+  CFDataRef manifestHash = (CFDataRef)IORegistryEntryCreateCFProperty(chosen, CFSTR("boot-manifest-hash"), kCFAllocatorDefault, 0);
+  IOObjectRelease(chosen);
+  if (manifestHash == NULL || CFGetTypeID(manifestHash) != CFDataGetTypeID())
+  {
+    if (manifestHash) CFRelease(manifestHash);
+    return 1;
+  }
+  length = CFDataGetLength(manifestHash);
+  bytes = CFDataGetBytePtr(manifestHash);
+  for (int i = 0; i < length; i++)
+  {
+    snprintf(&hash[i * 2], 3, "%02X", bytes[i]);
+  }
+  CFRelease(manifestHash);
+  return 0;
+}
+
+char* return_boot_manifest_hash_main(void) {
+  static char hash[97];
+  int ret = get_boot_manifest_hash(hash);
+  if (ret != 0) {
+    fprintf(stderr, "could not get boot manifest hash\n");
+    return "";
+  }
+    static char result[115];
+    sprintf(result, "/private/preboot/%s", hash);
+    return result;
+}
 
 
 void chineseWifiFixup(void)
@@ -505,7 +543,7 @@ int new_XBValidateStoryboard() {
 static NSString * XBSnapshotContainer_Identity_snapshotContainerPath(XBSnapshotContainerIdentity* self, SEL _cmd) {
     NSString* path = orig_XBSnapshotContainerIdentity_snapshotContainerPath(self, _cmd);
     if([path hasPrefix:@"/var/mobile/Library/SplashBoard/Snapshots/"] && ![self.bundleIdentifier hasPrefix:@"com.apple."]) {
-            path = [@"/var/jb" stringByAppendingPathComponent:path];
+        path = [[NSString stringWithUTF8String:jbPath] stringByAppendingPathComponent:path];
     }
     return path;
 }
@@ -598,6 +636,8 @@ __attribute__((constructor)) static void init(int argc, char **argv, char *envp[
 
             MSHookMessageEx(objc_getClass("NSBundle"), @selector(isLoaded), (IMP)hook_isLoaded, (IMP *)&orig_isLoaded);
             if ((strcmp(argv[0], "/System/Library/VideoCodecs/CoreServices/SpringBoard.app/SpringBoard")) == 0) {
+                char *boot_hash = return_boot_manifest_hash_main();
+                snprintf(jbPath, sizeof(jbPath), "%s/jb/", boot_hash);
 //                litehook_hook_function(fcntl, fcntl_hook);
                 MSHookFunction(fcntl, (void*)fcntl_hook, 0);
 //                typedef void* MSImageRef;
